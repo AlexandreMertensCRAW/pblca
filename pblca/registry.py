@@ -64,6 +64,19 @@ class AnimalGroup:
             ``tier2_2019`` variant to pick the tabulated Ym of Table
             10.12 (Updated) without interpolation. None = inferred
             from the concentrate share (see ``_ym_2019``).
+        ch4_measured_ahcs: enteric CH4 measured on-farm with an
+            Automated Head-Chamber System (GreenFeed, C-Lock Inc.),
+            in g CH4/head/day (average over the monitoring period,
+            preferably >= 30 days of visits to capture the diurnal
+            variability; Hammond et al. 2016). Used by the
+            ``measured_ahcs`` variant of the ``enteric_ch4`` slot;
+            the manure models are NOT affected (they follow the
+            ration mode, the AHCS says nothing about intake).
+        ch4_measured_ahcs_rel_sd: relative standard deviation of the
+            AHCS measurement (e.g. 0.08 for ±8 %). During
+            Monte-Carlo, one multiplicative lognormal factor per
+            group and per iteration (median 1) is drawn and applied
+            to ``ch4_measured_ahcs``.
         ration_rel_sd: relative standard deviation of the measured-
             ration quantification error (e.g. 0.05 for ±5 %). During
             Monte-Carlo, one multiplicative lognormal factor per group
@@ -103,6 +116,8 @@ class AnimalGroup:
     ge_measured: Optional[float] = None
     ration_rel_sd: Optional[float] = None
     system: Optional[str] = None
+    ch4_measured_ahcs: Optional[float] = None
+    ch4_measured_ahcs_rel_sd: Optional[float] = None
 
     @property
     def ration_mode(self) -> str:

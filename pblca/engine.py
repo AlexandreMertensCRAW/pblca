@@ -144,19 +144,27 @@ def _set_ration_mode(ration_state: List[tuple], mode: str) -> None:
     """Force the ration-definition mode on the animal groups (in place).
 
     ``ration_state`` is a snapshot of
-    (group, dmi_measured, ge_measured, ration_rel_sd) tuples taken
-    before the comparison. ``mode`` is either ``"ipcc"`` (measures
-    temporarily removed: the IPCC energy chain is used everywhere) or
-    ``"measured"`` (the snapshot values are restored; groups carrying
-    measures use them).
+    (group, dmi_measured, ge_measured, ration_rel_sd, ch4_measures)
+    tuples taken before the comparison. ``mode`` is either
+    ``"ipcc"`` (ration measures temporarily removed: the IPCC energy
+    chain is used everywhere) or ``"measured"`` (the snapshot values
+    are restored; groups carrying measures use them). The measured
+    enteric-CH4 values are always restored to their snapshot values
+    (they are perturbed independently, see
+    ``_perturb_measured_rations``).
     """
-    for group, dmi, ge, _rel_sd in ration_state:
+    for record in ration_state:
+        group, dmi, ge, _rel_sd, ch4_measures = (
+            record[0], record[1], record[2], record[3], record[4]
+        )
         if mode == "ipcc":
             group.dmi_measured = None
             group.ge_measured = None
         else:
             group.dmi_measured = dmi
             group.ge_measured = ge
+        for method, value, _sd in ch4_measures:
+            setattr(group, f"ch4_measured_{method}", value)
 
 
 def _perturb_measured_rations(
@@ -174,29 +182,55 @@ def _perturb_measured_rations(
     feed-analysis error. Groups without measures or without
     ``ration_rel_sd`` are left untouched.
 
+    The measured enteric CH4 (``ch4_measured_<method>`` fields) is
+    perturbed independently per method with its own lognormal factor
+    (sigma = ``ch4_measured_<method>_rel_sd``), so the measurement
+    uncertainty of each method propagates through the Monte-Carlo.
+
     Call AFTER ``_set_ration_mode(..., "measured")``; the snapshot
     values are restored by the next ``_set_ration_mode`` call.
     """
-    for group, dmi, ge, rel_sd in ration_state:
-        if dmi is None and ge is None:
-            continue
-        if not rel_sd or rel_sd <= 0:
-            continue
-        factor = float(rng.lognormal(0.0, rel_sd))
-        if dmi is not None:
-            group.dmi_measured = dmi * factor
-        if ge is not None:
-            group.ge_measured = ge * factor
+    for record in ration_state:
+        group, dmi, ge, rel_sd, ch4_measures = (
+            record[0], record[1], record[2], record[3], record[4]
+        )
+        if (dmi is not None or ge is not None) and rel_sd and rel_sd > 0:
+            factor = float(rng.lognormal(0.0, rel_sd))
+            if dmi is not None:
+                group.dmi_measured = dmi * factor
+            if ge is not None:
+                group.ge_measured = ge * factor
+        for method, value, sd in ch4_measures:
+            if value is not None and sd and sd > 0:
+                factor = float(rng.lognormal(0.0, sd))
+                setattr(group, f"ch4_measured_{method}", value * factor)
 
 
-def _ration_snapshot(
-    farms: Sequence[FarmContext],
-) -> List[tuple]:
-    """Snapshot of the ration definition of every animal group."""
-    return [
-        (g, g.dmi_measured, g.ge_measured, g.ration_rel_sd)
-        for f in farms for g in f.animals
-    ]
+def _ration_snapshot(farms: Sequence[FarmContext]) -> List[tuple]:
+    """Snapshot of the measured values of every animal group.
+
+    Captures the measured ration (DMI, GE and their relative sd)
+    and every measured enteric-CH4 method value (with its relative
+    sd), so that the Monte-Carlo perturbations can be applied from
+    the unperturbed values and fully restored afterwards.
+    """
+    from .processes.enteric import CH4_MEASUREMENT_METHODS
+
+    snapshot = []
+    for f in farms:
+        for g in f.animals:
+            ch4_measures = [
+                (
+                    method,
+                    getattr(g, f"ch4_measured_{method}", None),
+                    getattr(g, f"ch4_measured_{method}_rel_sd", None),
+                )
+                for method in CH4_MEASUREMENT_METHODS
+            ]
+            snapshot.append(
+                (g, g.dmi_measured, g.ge_measured, g.ration_rel_sd, ch4_measures)
+            )
+    return snapshot
 
 
 def _distribute_manure_n(farm: FarmContext, n_organic_total: float) -> None:
@@ -418,7 +452,7 @@ class LCAEngine:
 
         ration_state = _ration_snapshot(farms)
         has_measures = any(
-            dmi is not None or ge is not None for _, dmi, ge, _ in ration_state
+            dmi is not None or ge is not None for _, dmi, ge, _, _ in ration_state
         )
 
         # Central simulation (reference). It is recorded through the
@@ -537,7 +571,7 @@ class LCAEngine:
         # comparison is only meaningful if at least one group carries
         # measured values.
         ration_state = _ration_snapshot(farms)
-        if not any(dmi is not None or ge is not None for _, dmi, ge, _ in ration_state):
+        if not any(dmi is not None or ge is not None for _, dmi, ge, _, _ in ration_state):
             raise ValueError(
                 "run_ration_comparison requires at least one animal group "
                 "with dmi_measured and/or ge_measured set"

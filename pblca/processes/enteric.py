@@ -46,6 +46,81 @@ REF_T2_FAO = (
 )
 REF_T3 = "Ellis et al. 2009 (exponential saturation, after Mills et al. 2003)"
 
+# Registry of on-farm CH4 measurement methods. Key = method suffix
+# used in the AnimalGroup field names (ch4_measured_<method> and
+# ch4_measured_<method>_rel_sd) and in the variant name
+# (measured_<method>). Value = (method label, bibliographic reference).
+# Adding a new measurement method = adding one entry here and
+# registering the matching variant in SPECS below.
+CH4_MEASUREMENT_METHODS = {
+    "ahcs": (
+        "Automated Head-Chamber System (GreenFeed, C-Lock Inc.)",
+        "Zimmerman et al. 2015, J. Vis. Exp. e52904; Hammond et al. 2016",
+    ),
+}
+
+
+def _make_enteric_measured(method: str):
+    """Factory of measured-enteric variants (universal interface).
+
+    One variant is registered per on-farm measurement method
+    (``measured_ahcs``, and later ``measured_sf6``, ...): each reads
+    its own AnimalGroup fields (``ch4_measured_<method>`` and its
+    ``_rel_sd`` uncertainty), so two methods measuring the same
+    animals coexist without ambiguity — the ``model_selection``
+    decides which one is used, and the variants remain comparable
+    in a paired Monte-Carlo.
+
+    Args:
+        method: key of CH4_MEASUREMENT_METHODS (e.g. "ahcs").
+
+    Returns:
+        a model function ``(ModelContext) -> ModelResult``.
+    """
+    label, reference = CH4_MEASUREMENT_METHODS[method]
+    field = f"ch4_measured_{method}"
+
+    def enteric_measured(ctx: ModelContext) -> ModelResult:
+        res = ModelResult(model_name=f"measured_{method}")
+        res.trace["per_group"] = {}
+        total = 0.0
+        for g in ctx.farm.animals:
+            value = getattr(g, field)
+            if value is None:
+                ctx.logger.error(
+                    "enteric",
+                    f"Group {g.key} has no {field} set — the "
+                    f"measured_{method} variant cannot be applied; "
+                    f"provide the measurement or select another variant",
+                )
+                raise ValueError(
+                    f"{field} missing for group {g.key} "
+                    f"(variant measured_{method})"
+                )
+            if value <= 0:
+                ctx.logger.error(
+                    "enteric",
+                    f"{field} must be positive for group {g.key} "
+                    f"(got {value})",
+                )
+                raise ValueError(
+                    f"{field} not positive for group {g.key}"
+                )
+            ch4_kg_year = value / 1000.0 * g.days * g.n_head
+            total += ch4_kg_year
+            res.trace["per_group"][g.key] = {
+                "ch4_g_day": value,
+                "days": g.days,
+                "ch4_kg": ch4_kg_year,
+                "n_head": g.n_head,
+            }
+        res.ch4_kg = total
+        res.trace["method"] = label
+        res.trace["reference"] = reference
+        return res
+
+    return enteric_measured
+
 
 def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__") -> Dict[str, float]:
     """Gross energy intake and DMI of an animal group.
@@ -421,3 +496,20 @@ SPECS = [
         description="Exponential saturation CH4 = 10.8×(1−e^(−0.141×DMI)).",
     ),
 ]
+
+# One measured variant per on-farm measurement method (ahcs, ...).
+for _method, (_label, _ref) in CH4_MEASUREMENT_METHODS.items():
+    SPECS.append(
+        ModelSpec(
+            slot="enteric_ch4",
+            variant=f"measured_{_method}",
+            tier="Measured",
+            func=_make_enteric_measured(_method),
+            reference=_ref,
+            description=(
+                f"On-farm measurement ({_label}): user-provided g CH4/head/d "
+                f"directly used, uncertainty propagated via "
+                f"ch4_measured_{_method}_rel_sd."
+            ),
+        )
+    )

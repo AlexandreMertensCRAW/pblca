@@ -460,6 +460,100 @@ class TestProcesses:
         assert ym == pytest.approx(0.015)
         assert any(m["level"] == "WARNING" for m in log.as_list())
 
+    def test_measured_ahcs_variant(self):
+        # Direct use of a GreenFeed (AHCS) measurement, g CH4/head/d.
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+        from pblca.processes.enteric import _make_enteric_measured
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        animal = AnimalGroup(
+            key="g", n_head=10, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+            ch4_measured_ahcs=220.0,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        res = _make_enteric_measured("ahcs")(ctx)
+        # 220 g/d × 182 d × 10 head = 400.4 kg CH4
+        assert res.ch4_kg == pytest.approx(220.0 / 1000.0 * 182 * 10)
+        assert res.model_name == "measured_ahcs"
+        assert "GreenFeed" in res.trace["method"]
+
+    def test_measured_ahcs_missing_value_raises(self):
+        # Variant selected but a group carries no AHCS measurement:
+        # ERROR logged, run fails (no silent fallback).
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+        from pblca.processes.enteric import _make_enteric_measured
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        with pytest.raises(ValueError):
+            _make_enteric_measured("ahcs")(ctx)
+        assert log.n_errors == 1
+
+    def test_measured_ahcs_registered_variant(self, engine, farm):
+        # The variant is registered and runs end-to-end through the
+        # engine, with its bibliographic reference in the ledger.
+        for a in farm.animals:
+            a.ch4_measured_ahcs = 250.0
+            a.ch4_measured_ahcs_rel_sd = 0.08
+        r = engine.run(
+            farm,
+            model_selection={"enteric_ch4": "measured_ahcs"},
+            record=False,
+        )
+        expected = sum(
+            250.0 / 1000.0 * a.days * a.n_head for a in farm.animals
+        )
+        assert r.ledger.total("CH4") > 0
+        enteric_entries = [
+            e for e in r.ledger.entries()
+            if e.source == "enteric" and e.model == "measured_ahcs"
+        ]
+        assert enteric_entries
+        assert any("Zimmerman" in e.reference for e in enteric_entries)
+        # Manure CH4 still computed (ration mode unchanged).
+        assert any(
+            e.source == "manure_ch4" for e in r.ledger.entries()
+        )
+
+    def test_measured_ahcs_mc_uncertainty(self, engine, farm):
+        # The AHCS measurement uncertainty propagates through the MC
+        # and the run is reproducible for a given seed.
+        for a in farm.animals:
+            a.ch4_measured_ahcs = 250.0
+            a.ch4_measured_ahcs_rel_sd = 0.10
+        mc1 = engine.run_monte_carlo(
+            farm, n_iterations=40, seed=29,
+            model_selection={"enteric_ch4": "measured_ahcs"},
+            record=False,
+        )
+        mc2 = engine.run_monte_carlo(
+            farm, n_iterations=40, seed=29,
+            model_selection={"enteric_ch4": "measured_ahcs"},
+            record=False,
+        )
+        s1 = mc1["impacts"]["gwp100"]
+        s2 = mc2["impacts"]["gwp100"]
+        assert s1["mean"] == pytest.approx(s2["mean"])
+        assert s1["sd"] > 0
+        assert s1["n"] == 40
+        # Idempotence: measured values restored.
+        assert all(a.ch4_measured_ahcs == 250.0 for a in farm.animals)
+
     def test_soil_n2o_proportional_to_inputs(self):
         from pblca.processes.soil import soil_n2o
         from pblca.registry import LandParcel
