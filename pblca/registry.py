@@ -342,6 +342,11 @@ class ModelRegistry:
     def variants(self, slot: str) -> List[str]:
         return sorted(self._specs.get(slot, {}))
 
+    def get_specs(self, slot: str) -> List[ModelSpec]:
+        """All variants registered for a slot (demonstration of the
+        registry: run every alternative equation of a phenomenon)."""
+        return list(self._specs.get(slot, {}).values())
+
     def get(self, slot: str, variant: Optional[str] = None) -> ModelSpec:
         """Retrieve a variant; if ``variant`` is None, take the first."""
         if slot not in self._specs:
