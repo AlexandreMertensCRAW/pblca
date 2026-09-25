@@ -1237,17 +1237,73 @@ class TestScenarioGrid:
         # Grid: one scenario, recorded.
         assert len(summary["scenarios"]) == 1
         assert not summary["scenarios"][0]["excluded"]
-        # Monte-Carlo per enteric variant of the grid, per-group CH4
+        # Monte-Carlo per (slot, variant) of the grid, per-group CH4
         # section present in the JSON entry.
         assert "monte_carlo" in summary
+        assert set(summary["monte_carlo"]) == {"enteric_ch4=tier2_2006"}
         mc_entry = [
             e for e in engine.datastore._entries
-            if e["sim_id"] == "mc_orch_farm_enteric_tier2_2006"
+            if e["sim_id"] == "mc_orch_farm_enteric_ch4_tier2_2006"
         ][0]
         assert "enteric_ch4_per_group_kg" in mc_entry["uncertainty"]
         # Paired ration comparison ran (measured rations available).
         assert "ration_comparison" in summary
         assert not isinstance(summary["ration_comparison"], str)
+
+    def test_run_case_study_mc_for_every_grid_slot(self, tmp_path):
+        """The Monte-Carlo step must sweep every slot of the grid,
+        not only enteric_ch4; each slot-specific trace section must
+        be recorded in its JSON entry."""
+        from pblca.engine import LCAEngine
+        from pblca.scenarios import (
+            CaseStudyConfig,
+            GroupMeasurements,
+            NumericalOptions,
+            run_case_study,
+        )
+
+        engine = LCAEngine(datastore_path=str(tmp_path / "results.json"))
+        config = CaseStudyConfig(
+            name="mc_slots_farm",
+            farm_builder=build_case_study_farm,
+            measurements=GroupMeasurements(
+                # tier3_eugene2019 requires diet_om/diet_omd on every
+                # group; invented values for the test only.
+                diet_om={
+                    "veaux_0_6mois": 0.91, "jeunes_6_12mois": 0.90,
+                    "engraissés_12_21mois": 0.89,
+                },
+                diet_omd={
+                    "veaux_0_6mois": 0.72, "jeunes_6_12mois": 0.70,
+                    "engraissés_12_21mois": 0.68,
+                },
+            ),
+            variant_grid={
+                "enteric_ch4": ["tier2_2006"],
+                "manure_ch4": ["ipcc_tier2", "tier3_eugene2019"],
+            },
+            mc=NumericalOptions(n_iterations=5, seed=3),
+        )
+        summary = run_case_study(engine, config, record=True)
+
+        # One MC summary per (slot, variant), keys are "slot=variant".
+        assert set(summary["monte_carlo"]) == {
+            "enteric_ch4=tier2_2006",
+            "manure_ch4=ipcc_tier2",
+            "manure_ch4=tier3_eugene2019",
+        }
+        # Each MC has its own JSON entry with the proper sim_id and
+        # its slot-specific uncertainty traces.
+        by_sim = {e["sim_id"]: e for e in engine.datastore._entries}
+        mc_enteric = by_sim["mc_mc_slots_farm_enteric_ch4_tier2_2006"]
+        assert "enteric_ch4_per_group_kg" in mc_enteric["uncertainty"]
+        mc_manure_t2 = by_sim["mc_mc_slots_farm_manure_ch4_ipcc_tier2"]
+        assert "manure_ch4_by_system_kg" in mc_manure_t2["uncertainty"]
+        mc_manure_t3 = by_sim["mc_mc_slots_farm_manure_ch4_tier3_eugene2019"]
+        assert "manure_ch4_by_system_kg" in mc_manure_t3["uncertainty"]
+        # Same seed everywhere (paired draws).
+        for entry in (mc_enteric, mc_manure_t2, mc_manure_t3):
+            assert entry["uncertainty"]["seed"] == 3
 
 
 class TestIngestionExplicitVariants:

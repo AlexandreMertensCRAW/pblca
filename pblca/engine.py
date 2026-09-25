@@ -515,6 +515,17 @@ class LCAEngine:
             .get("per_group", {})
         )
         group_ch4_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
+        # Per-management-system manure CH4 samples (the manure
+        # variants trace ch4_kg by storage/handling system: pasture,
+        # solid storage, ...).
+        system_keys = list(
+            central.model_outputs.get("manure_ch4", {})
+            .get("trace", {})
+            .get("systems", {})
+        )
+        system_ch4_samples: Dict[str, List[float]] = {
+            k: [] for k in system_keys
+        }
         failed = 0
         iteration_outputs: List[Dict[str, Any]] = []
         for _ in range(n_iterations):
@@ -545,6 +556,15 @@ class LCAEngine:
                 )
                 if trace is not None and "ch4_kg" in trace:
                     group_ch4_samples[key].append(trace["ch4_kg"])
+            for key in system_keys:
+                ch4_sys = (
+                    it.model_outputs.get("manure_ch4", {})
+                    .get("trace", {})
+                    .get("systems", {})
+                    .get(key)
+                )
+                if ch4_sys is not None:
+                    system_ch4_samples[key].append(ch4_sys)
             if return_traces:
                 iteration_outputs.append(it.model_outputs)
         restore_parcels()
@@ -577,6 +597,21 @@ class LCAEngine:
         }
         if group_stats:
             uncertainty["enteric_ch4_per_group_kg"] = group_stats
+        central_systems = (
+            central.model_outputs.get("manure_ch4", {})
+            .get("trace", {})
+            .get("systems", {})
+        )
+        system_stats = {
+            k: {
+                **_stats(v),
+                "central_kg": central_systems.get(k),
+            }
+            for k, v in system_ch4_samples.items()
+            if len(v) > 0
+        }
+        if system_stats:
+            uncertainty["manure_ch4_by_system_kg"] = system_stats
         if record:
             self._record(central, summary, central_values, uncertainty=uncertainty)
         result = {

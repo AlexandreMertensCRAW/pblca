@@ -292,9 +292,11 @@ def run_case_study(
     Steps:
       1. apply the measurements and run the scenario grid
          (central values, one JSON entry per scenario);
-      2. for each enteric variant of the grid, run a Monte-Carlo
-         (paired draws: same seed; per-animal-group CH4 statistics
-         recorded in the JSON for the R figures);
+      2. for each (slot, variant) of the grid, run a Monte-Carlo
+         varying that single slot (paired draws: same seed for
+         every MC; the slot-specific traces, e.g. per-animal-group
+         CH4 or per-manure-system CH4, are recorded in the JSON for
+         the R figures);
       3. if measured rations are available, run the paired
          ration comparison (IPCC equations vs measured).
 
@@ -322,33 +324,33 @@ def run_case_study(
         for r in records
     ]
 
-    # 2. Monte-Carlo per enteric variant of the grid.
+    # 2. Monte-Carlo per variant of the grid, for every slot.
+    #    Each MC varies a single slot (the other slots keep their
+    #    central/default variants); the same seed is reused so the
+    #    draws are paired between MC runs.
     mc_options = config.mc
     if mc_options is not None:
-        mc_summary = {}
-        enteric_variants = (config.variant_grid or {}).get("enteric_ch4", [])
-        for variant in enteric_variants:
-            runnable = _variant_is_runnable(
-                engine.registry, "enteric_ch4", variant, farms
-            )
-            if runnable is not None:
-                continue
-            mc = engine.run_monte_carlo(
-                farms,
-                n_iterations=mc_options.n_iterations,
-                seed=mc_options.seed,
-                model_selection={"enteric_ch4": variant},
-                sim_id=f"mc_{config.name}_enteric_{variant}",
-                record=record,
-            )
-            mc_summary[variant] = mc
-        out["monte_carlo"] = {
-            v: {
-                "gwp100": s["impacts"]["gwp100"],
-                "failed_iterations": s["failed_iterations"],
-            }
-            for v, s in mc_summary.items()
-        }
+        mc_summary: Dict[str, Dict[str, Any]] = {}
+        for slot, variants in (config.variant_grid or {}).items():
+            for variant in variants:
+                runnable = _variant_is_runnable(
+                    engine.registry, slot, variant, farms
+                )
+                if runnable is not None:
+                    continue
+                mc = engine.run_monte_carlo(
+                    farms,
+                    n_iterations=mc_options.n_iterations,
+                    seed=mc_options.seed,
+                    model_selection={slot: variant},
+                    sim_id=f"mc_{config.name}_{slot}_{variant}",
+                    record=record,
+                )
+                mc_summary[f"{slot}={variant}"] = {
+                    "gwp100": mc["impacts"]["gwp100"],
+                    "failed_iterations": mc["failed_iterations"],
+                }
+        out["monte_carlo"] = mc_summary
 
     # 3. Paired ration comparison when measured rations exist.
     has_measured_ration = any(

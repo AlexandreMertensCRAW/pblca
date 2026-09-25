@@ -3,8 +3,8 @@
 The farm description, the available measurements, the model variants
 to test and the coherent combinations all live in
 ``case_studies/ferme_20ha.py`` (CaseStudyConfig); this script only
-orchestrates: scenario grid -> Monte-Carlo per enteric variant ->
-paired ration comparison -> JSON save.
+orchestrates: scenario grid -> Monte-Carlo per (slot, variant) of
+the grid -> paired ration comparison -> JSON save.
 """
 
 from case_studies.ferme_20ha import CONFIG
@@ -29,7 +29,7 @@ def main() -> None:
         print(f"  {rec['sim_id']:75s} [{status}]{reason}")
 
     if "monte_carlo" in summary:
-        print("\n--- Monte-Carlo per enteric variant (GWP100) ---")
+        print("\n--- Monte-Carlo per variant of the grid (GWP100) ---")
         for variant, s in summary["monte_carlo"].items():
             g = s["gwp100"]
             print(
