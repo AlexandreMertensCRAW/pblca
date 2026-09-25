@@ -50,6 +50,24 @@ class AnimalGroup:
         work_hours: working hours / day (0 here).
         pregnant: gestation (False here).
         grazing: fraction of the year at pasture (0-1).
+        dmi_measured: on-farm measured dry matter intake (kg DM/head/d).
+            When set (positive), it bypasses the IPCC energy-chain
+            estimate for DMI (ration encoded "by hand" from farm
+            measurements).
+        ge_measured: on-farm measured gross energy intake (MJ/head/d).
+            When set (positive), it bypasses the IPCC energy-chain
+            estimate for GE.
+
+    Two ration-definition modes are therefore available per group:
+
+        1. ``ipcc_equations`` (default): GE and DMI are derived from net
+           energy requirements and diet digestibility (IPCC 2006
+           Vol.4 Ch.10, Eq. 10.3-10.16).
+        2. ``measured``: GE and/or DMI are encoded directly from farm
+           measurements (e.g. ration sheets, weighing, feed analysis).
+
+    The mode applies wherever the group's intake is used (enteric CH4,
+    manure CH4/N2O) so that enteric ↔ manure consistency is preserved.
     """
 
     key: str
@@ -65,6 +83,16 @@ class AnimalGroup:
     work_hours: float = 0.0
     pregnant: bool = False
     grazing: float = 1.0
+    dmi_measured: Optional[float] = None
+    ge_measured: Optional[float] = None
+
+    @property
+    def ration_mode(self) -> str:
+        """"ipcc_equations" when both measures are absent, "measured"
+        when at least one is present."""
+        if self.dmi_measured is not None or self.ge_measured is not None:
+            return "measured"
+        return "ipcc_equations"
 
 
 @dataclass

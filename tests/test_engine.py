@@ -213,6 +213,99 @@ class TestProcesses:
         e_big = _energy_chain(ctx, big)
         assert e_big["ge_mj_day"] > e_small["ge_mj_day"]
 
+    def test_measured_ration_bypasses_ipcc(self):
+        # Mode "measured": DMI/GE encoded by hand must override the
+        # IPCC estimate, for both enteric variants.
+        from pblca.processes.enteric import _energy_chain, enteric_tier2
+        from pblca.registry import AnimalGroup
+
+        ps = build_default_parameter_set()
+        base = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+        )
+        measured = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+            dmi_measured=8.0, ge_measured=147.6,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[base], parcels=[],
+            purchases={}, manure_split={"solid_storage": 1.0},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), DiagLogger())
+        e_ipcc = _energy_chain(ctx, base)
+        assert e_ipcc["ration_mode"] == "ipcc_equations"
+        e_meas = _energy_chain(ctx, measured)
+        assert e_meas["ration_mode"] == "measured"
+        assert e_meas["dmi_kg_day"] == pytest.approx(8.0)
+        assert e_meas["ge_mj_day"] == pytest.approx(147.6)
+        # CH4 must scale with the measured GE, not the IPCC GE.
+        ch4_base = enteric_tier2(ctx).ch4_kg
+        ctx.farm.animals = [measured]
+        ch4_meas = enteric_tier2(ctx).ch4_kg
+        assert ch4_meas != pytest.approx(ch4_base)
+
+    def test_measured_ration_inconsistency_warns(self):
+        from pblca.processes.enteric import _energy_chain
+        from pblca.registry import AnimalGroup
+
+        ps = build_default_parameter_set()
+        measured = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+            dmi_measured=8.0, ge_measured=200.0,  # inconsistent pair
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[measured], parcels=[],
+            purchases={}, manure_split={"solid_storage": 1.0},
+        )
+        log = DiagLogger()
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        _energy_chain(ctx, measured)
+        assert any(m["level"] == "WARNING" for m in log.as_list())
+
+    def test_measured_dmi_only_derives_ge(self):
+        from pblca.processes.enteric import _energy_chain
+        from pblca.registry import AnimalGroup
+
+        ps = build_default_parameter_set()
+        measured = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+            dmi_measured=8.0,  # GE derived: 8.0 × 18.45 = 147.6
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[measured], parcels=[],
+            purchases={}, manure_split={"solid_storage": 1.0},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), DiagLogger())
+        e = _energy_chain(ctx, measured)
+        assert e["ge_mj_day"] == pytest.approx(8.0 * 18.45)
+
+    def test_measured_ration_flows_to_manure(self):
+        # Enteric ↔ manure consistency: the measured intake must also
+        # drive VS and N excretion in the manure models.
+        from pblca.processes.manure import _per_group_fluxes
+        from pblca.registry import AnimalGroup
+
+        ps = build_default_parameter_set()
+        measured = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+            dmi_measured=12.0, ge_measured=221.4,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[measured], parcels=[],
+            purchases={}, manure_split={"solid_storage": 1.0},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), DiagLogger())
+        fl = _per_group_fluxes(ctx)
+        assert fl["g"]["vs_kg_day"] > 0
+        assert fl["g"]["n_excreta_kg_day"] == pytest.approx(
+            12.0 * ps.central_values()["cp_feed"] / 6.25
+        )
+
     def test_soil_n2o_proportional_to_inputs(self):
         from pblca.processes.soil import soil_n2o
         from pblca.registry import LandParcel

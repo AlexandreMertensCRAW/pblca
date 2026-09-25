@@ -13,6 +13,11 @@ Two alternative equations registered for the ``enteric_ch4`` slot:
 Both variants follow the universal interface
 ``(ModelContext) -> ModelResult`` and are therefore interchangeable at
 every simulation (alternative-model testability requirement).
+
+Ration definition: each ``AnimalGroup`` can either rely on the IPCC
+equations (default) or carry measured ``dmi_measured``/``ge_measured``
+values encoded directly from farm data — see ``AnimalGroup`` and
+``_energy_chain``.
 """
 
 from __future__ import annotations
@@ -26,22 +31,72 @@ REF_T3 = "Ellis et al. 2009 (exponential saturation, after Mills et al. 2003)"
 
 
 def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__") -> Dict[str, float]:
-    """IPCC Tier-2 energy chain for an animal group.
+    """Gross energy intake and DMI of an animal group.
 
-    Estimates GE (MJ/head/d) from net energy requirements and diet
-    digestibility (Eq. 10.3–10.16), then the associated DMI.
+    Two ration-definition modes (requirement: alternative inputs, e.g.
+    on-farm measurements):
+
+    * ``ipcc_equations`` (default): GE is estimated from net energy
+      requirements and diet digestibility (Eq. 10.3-10.16), then DMI
+      follows as GE / diet_ge_density.
+    * ``measured``: if the group carries ``dmi_measured`` and/or
+      ``ge_measured`` (farm measurements, e.g. ration sheets), those
+      values are used directly instead of the IPCC chain. When only
+      one of the two is provided, the other is derived from
+      ``diet_ge_density`` (GE = DMI × density, DMI = GE / density). A
+      warning is logged when the two provided measures are mutually
+      inconsistent (> 10 % departure from GE = DMI × density).
 
     Args:
         ctx: model context (parameters + current values).
         g: animal group (age class).
 
     Returns:
-        a {ge_mj_day, dmi_kg_day, wg_kg_day, bw_avg} dictionary.
+        a {ge_mj_day, dmi_kg_day, wg_kg_day, bw_avg, ration_mode}
+        dictionary.
     """
     v = ctx.v
     # Average weight over the period and daily gain.
     bw_avg = 0.5 * (g.bw_start + g.bw_end)
     wg_day = (g.bw_end - g.bw_start) / g.days if g.days > 0 else 0.0
+
+    # --- Mode 2: ration encoded directly from farm measurements ------
+    if g.ration_mode == "measured":
+        dmi = g.dmi_measured
+        ge = g.ge_measured
+        density = g.diet_ge_density
+        if dmi is not None and ge is not None:
+            if density > 0 and abs(ge - dmi * density) > 0.10 * max(ge, dmi * density, 1e-9):
+                ctx.logger.warn(
+                    "enteric",
+                    f"Measured GE ({ge:.1f} MJ/d) and DMI ({dmi:.2f} kg/d) "
+                    f"inconsistent with the diet energy density "
+                    f"({density:.2f} MJ/kg DM) for group {g.key}",
+                )
+        elif dmi is not None:
+            ge = dmi * density if density > 0 else None
+            if ge is None:
+                ctx.logger.error("enteric", f"diet_ge_density is zero for group {g.key}")
+                ge = 0.0
+        elif ge is not None:
+            dmi = ge / density if density > 0 else None
+            if dmi is None:
+                ctx.logger.error("enteric", f"diet_ge_density is zero for group {g.key}")
+                dmi = 0.0
+        if (dmi is not None and dmi <= 0) or (ge is not None and ge <= 0):
+            ctx.logger.error(
+                "enteric",
+                f"Measured intake must be positive for group {g.key} "
+                f"(got DMI={dmi}, GE={ge})",
+            )
+        return {
+            "ge_mj_day": ge or 0.0,
+            "dmi_kg_day": dmi or 0.0,
+            "wg_kg_day": wg_day,
+            "bw_avg": bw_avg,
+            "ration_mode": "measured",
+        }
+    # --- Mode 1: IPCC Tier-2 energy chain ----------------------------
 
     # Eq. 10.3: NEm = Cfi * BW^0.75 (Cfi = 0.322 for growing cattle)
     nem = v("cfi_growing_cattle") * bw_avg ** 0.75
@@ -81,7 +136,13 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
     if ge <= 0:
         ctx.logger.error("enteric", f"GE is zero for group {g.key}")
     dmi = ge / g.diet_ge_density if g.diet_ge_density > 0 else 0.0
-    return {"ge_mj_day": ge, "dmi_kg_day": dmi, "wg_kg_day": wg_day, "bw_avg": bw_avg}
+    return {
+        "ge_mj_day": ge,
+        "dmi_kg_day": dmi,
+        "wg_kg_day": wg_day,
+        "bw_avg": bw_avg,
+        "ration_mode": "ipcc_equations",
+    }
 
 
 def enteric_tier2(ctx: ModelContext) -> ModelResult:
