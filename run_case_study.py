@@ -138,11 +138,16 @@ def main() -> None:
     # 2. Monte-Carlo (propagated uncertainties, shared parameters)
     # ------------------------------------------------------------------
     print("\n--- Monte-Carlo: 500 iterations (Tier-3) ---")
+    # Not recorded: the per-variant Monte-Carlo entries of section
+    # 2bis below (including tier3_mills, same seed) already cover this
+    # run; recording both would duplicate the JSON entry and double-
+    # stack the tier3_mills bar in R/plot_enteric_ch4_by_model.R.
     mc = engine.run_monte_carlo(
         farm,
         n_iterations=500,
         seed=2024,
         model_selection={"enteric_ch4": "tier3_mills"},
+        record=False,
     )
     s = mc["impacts"]["gwp100"]
     print(f"  GWP100 : mean={s['mean']:.0f}  sd={s['sd']:.0f}")

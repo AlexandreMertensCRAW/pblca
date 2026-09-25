@@ -34,6 +34,17 @@ if (length(mc_entries) == 0) {
        ". Run run_case_study.py (section 2bis) first.")
 }
 
+# Keep only the LAST entry per variant (defensive deduplication:
+# geom_col stacks bars sharing one x position, so two entries of the
+# same variant would draw a double-height bar with a mislocated
+# whisker).
+by_variant <- list()
+for (e in mc_entries) {
+  variant <- e$model_selection$enteric_ch4$variant
+  by_variant[[variant]] <- e
+}
+mc_entries <- unname(by_variant)
+
 rows <- list()
 i <- 1
 for (e in mc_entries) {
