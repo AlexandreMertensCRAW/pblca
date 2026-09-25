@@ -1,12 +1,19 @@
 # Plot per-animal-group enteric CH4 emissions (central value + p5-p95)
 #
-# Reads the Monte-Carlo entry from results.json and draws, for each
+# Reads a Monte-Carlo entry from results.json and draws, for each
 # animal group, a bar of the central value with p5-p95 whiskers.
 #
-# Usage: Rscript R/plot_enteric_ch4_groups.R [path/to/results.json]
+# Usage:
+#   Rscript R/plot_enteric_ch4_groups.R [path/to/results.json] [variant]
+#
+# variant: enteric_ch4 variant to plot (e.g. tier2_2006_modelled_
+# ingestion). When given, the most recent Monte-Carlo entry running
+# THIS variant is selected; when omitted, the most recent entry of
+# any variant is used.
 
 args <- commandArgs(trailingOnly = TRUE)
 json_path <- if (length(args) >= 1) args[1] else "results.json"
+wanted_variant <- if (length(args) >= 2) args[2] else NULL
 out_png <- "R/fig_ch4_par_lot.png"
 
 suppressPackageStartupMessages({
@@ -20,16 +27,35 @@ stopifnot("results file not found" = file.exists(json_path))
 doc <- fromJSON(json_path, simplifyVector = FALSE)
 entries <- doc$simulations
 
-# Keep the most recent Monte-Carlo entry carrying per-group CH4 stats.
+# Keep the Monte-Carlo entries carrying per-group CH4 stats.
 entries <- Filter(function(e) {
   !is.null(e$uncertainty) &&
-    !is.null(e$uncertainty$enteric_ch4_per_group_kg)
+    !is.null(e$uncertainty$enteric_ch4_per_group_kg) &&
+    !is.null(e$model_selection$enteric_ch4)
 }, entries)
 if (length(entries) == 0) {
   stop("No Monte-Carlo entry with 'enteric_ch4_per_group_kg' in ", json_path,
        ". Run run_case_study.py (Monte-Carlo) first.")
 }
-mc <- entries[[length(entries)]]
+
+# Variant selection: most recent entry of the requested variant, else
+# the most recent entry overall.
+if (!is.null(wanted_variant)) {
+  matching <- Filter(function(e) {
+    e$model_selection$enteric_ch4$variant == wanted_variant
+  }, entries)
+  if (length(matching) == 0) {
+    stop("No Monte-Carlo entry for variant '", wanted_variant, "' in ",
+         json_path, ". Available variants: ",
+         paste(unique(vapply(entries, function(e) {
+           e$model_selection$enteric_ch4$variant
+         }, character(1))), collapse = ", "))
+  }
+  mc <- matching[[length(matching)]]
+} else {
+  mc <- entries[[length(entries)]]
+}
+variant <- mc$model_selection$enteric_ch4$variant
 groups <- mc$uncertainty$enteric_ch4_per_group_kg
 
 df <- data.frame(
@@ -48,8 +74,8 @@ p <- ggplot(df, aes(x = lot, y = central_kg)) +
   labs(
     title = "Méthane entérique par lot d'animaux",
     subtitle = sprintf(
-      "Barres : valeur centrale ; moustaches : p5–p95 (Monte-Carlo, %d itérations)",
-      mc$uncertainty$n_iterations
+      "Variante : %s — barres : valeur centrale ; moustaches : p5–p95 (%d itérations)",
+      variant, mc$uncertainty$n_iterations
     ),
     x = "Lot",
     y = "CH4 entérique (kg/an)"
@@ -57,4 +83,4 @@ p <- ggplot(df, aes(x = lot, y = central_kg)) +
   theme_minimal()
 
 ggsave(out_png, p, width = 7, height = 5, dpi = 150)
-message("Figure saved: ", out_png)
+message("Figure saved: ", out_png, " (variant: ", variant, ")")

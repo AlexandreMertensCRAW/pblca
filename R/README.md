@@ -8,7 +8,15 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   recent Monte-Carlo entry carrying `uncertainty$enteric_ch4_per_group_kg`
   and plots, for each animal group (`lot`), a bar of the central value
   (`central_kg`, unperturbed run) with p5–p95 whiskers from the
-  Monte-Carlo propagation. Output: `R/fig_ch4_par_lot.png`.
+  Monte-Carlo propagation. An optional second argument selects the
+  `enteric_ch4` variant to plot (most recent entry of that variant):
+
+  ```bash
+  Rscript R/plot_enteric_ch4_groups.R results.json tier2_2006_modelled_ingestion
+  ```
+
+  Without it, the most recent Monte-Carlo entry of any variant is
+  used. Output: `R/fig_ch4_par_lot.png`.
 
 - `plot_enteric_ch4_by_model.R` — reads all the Monte-Carlo entries
   carrying per-group CH4 statistics (one per `enteric_ch4` variant,
