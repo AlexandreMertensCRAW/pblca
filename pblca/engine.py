@@ -123,6 +123,41 @@ class DataStore:
         return len(self._entries)
 
 
+def _stats(samples: List[float]) -> Dict[str, float]:
+    """Descriptive statistics of a sample (mean, sd, percentiles, n)."""
+    a = np.asarray(samples, dtype=float)
+    if a.size == 0:
+        return {"mean": float("nan"), "sd": float("nan"),
+                "p5": float("nan"), "p50": float("nan"),
+                "p95": float("nan"), "n": 0}
+    return {
+        "mean": float(a.mean()),
+        "sd": float(a.std(ddof=1)) if a.size > 1 else 0.0,
+        "p5": float(np.percentile(a, 5)),
+        "p50": float(np.percentile(a, 50)),
+        "p95": float(np.percentile(a, 95)),
+        "n": int(a.size),
+    }
+
+
+def _set_ration_mode(ration_state: List[tuple], mode: str) -> None:
+    """Force the ration-definition mode on the animal groups (in place).
+
+    ``ration_state`` is a snapshot of (group, dmi_measured, ge_measured)
+    tuples taken before the comparison. ``mode`` is either ``"ipcc"``
+    (measures temporarily removed: the IPCC energy chain is used
+    everywhere) or ``"measured"`` (the snapshot values are restored;
+    groups carrying measures use them).
+    """
+    for group, dmi, ge in ration_state:
+        if mode == "ipcc":
+            group.dmi_measured = None
+            group.ge_measured = None
+        else:
+            group.dmi_measured = dmi
+            group.ge_measured = ge
+
+
 def _distribute_manure_n(farm: FarmContext, n_organic_total: float) -> None:
     """Distribute the spread organic nitrogen (kg N/yr) over the parcels.
 
@@ -375,21 +410,6 @@ class LCAEngine:
                 gas_samples[g].append(it.ledger.total(g))
         restore_parcels()
 
-        def _stats(arr: List[float]) -> Dict[str, float]:
-            a = np.asarray(arr, dtype=float)
-            if a.size == 0:
-                return {"mean": float("nan"), "sd": float("nan"),
-                        "p5": float("nan"), "p50": float("nan"),
-                        "p95": float("nan"), "n": 0}
-            return {
-                "mean": float(a.mean()),
-                "sd": float(a.std(ddof=1)) if a.size > 1 else 0.0,
-                "p5": float(np.percentile(a, 5)),
-                "p50": float(np.percentile(a, 50)),
-                "p95": float(np.percentile(a, 95)),
-                "n": int(a.size),
-            }
-
         stats = {k: _stats(v) for k, v in impact_samples.items()}
         gas_stats = {
             g: _stats(v) for g, v in gas_samples.items() if len(v) > 0
@@ -410,3 +430,189 @@ class LCAEngine:
             "central_impacts": central.impacts,
             **uncertainty,
         }
+
+    # ------------------------------------------------------------------
+    # Paired Monte-Carlo: IPCC equations vs measured rations
+    # ------------------------------------------------------------------
+    def run_ration_comparison(
+        self,
+        farms: Union[FarmContext, Sequence[FarmContext]],
+        n_iterations: int = 1000,
+        model_selection: Optional[Dict[str, str]] = None,
+        seed: Optional[int] = None,
+        record: bool = True,
+    ) -> Dict[str, Any]:
+        """Paired evaluation of the two ration-definition modes.
+
+        At each Monte-Carlo iteration, ONE parameter draw is performed
+        and the farms are evaluated TWICE with this same draw:
+
+        * ``ipcc_equations``: every group's measured values are
+          temporarily removed, so the IPCC energy chain (Eq. 10.3-10.16)
+          drives enteric CH4 and manure fluxes;
+        * ``measured``: the measured DMI/GE values are restored, so
+          enteric CH4 and manure fluxes rely on the farm data.
+
+        Because the two evaluations of an iteration share the same
+        parameter draw (and therefore the same EF1, Ym, B0, ...), the
+        paired difference between the two modes isolates the effect of
+        the additional ration information. The respective standard
+        deviations quantify its effect on the precision of the result.
+
+        Args:
+            farms: one farm or a list of farms.
+            n_iterations: number of iterations (>0).
+            model_selection: variants per slot.
+            seed: random seed (reproducibility).
+            record: if True, records a summary entry in the datastore.
+
+        Returns:
+            a dictionary with, per indicator and per gas: the statistics
+            of each mode, the paired difference (measured − ipcc) and
+            the relative reduction of the standard deviation
+            (precision gain: 1 − sd_measured/sd_ipcc).
+        """
+        if isinstance(farms, FarmContext):
+            farms = [farms]
+        farms = list(farms)
+
+        # Groups without measurements are identical in both modes; a
+        # comparison is only meaningful if at least one group carries
+        # measured values.
+        ration_state = [
+            (g, g.dmi_measured, g.ge_measured)
+            for f in farms for g in f.animals
+        ]
+        if not any(dmi is not None or ge is not None for _, dmi, ge in ration_state):
+            raise ValueError(
+                "run_ration_comparison requires at least one animal group "
+                "with dmi_measured and/or ge_measured set"
+            )
+
+        rng = np.random.default_rng(seed)
+        base_organic = {
+            (f.farm_id, p.key): p.n_organic_spread
+            for f in farms for p in f.parcels
+        }
+
+        def restore_parcels() -> None:
+            for f in farms:
+                for p in f.parcels:
+                    p.n_organic_spread = base_organic[(f.farm_id, p.key)]
+
+        modes = ("ipcc_equations", "measured")
+        # Map the context ration mode to the switch function argument.
+        mode_switch = {"ipcc_equations": "ipcc", "measured": "measured"}
+
+        central_values = self.params.central_values()
+        central = {}
+        impact_samples: Dict[str, Dict[str, List[float]]] = {
+            m: {} for m in modes
+        }
+        gas_samples: Dict[str, Dict[str, List[float]]] = {
+            m: {g: [] for g in GASES} for m in modes
+        }
+        failed = {m: 0 for m in modes}
+
+        for mode in modes:
+            _set_ration_mode(ration_state, mode_switch[mode])
+            restore_parcels()
+            run = self.run(
+                farms,
+                model_selection=model_selection,
+                values=central_values,
+                sim_id=f"central_ration_{mode}",
+                record=False,
+            )
+            central[mode] = run
+            impact_samples[mode] = {k: [] for k in run.impacts}
+
+        summary = self.registry.selection_summary(central["measured"].model_selection)
+
+        for _ in range(n_iterations):
+            drawn = self.params.draw(rng)
+            for mode in modes:
+                _set_ration_mode(ration_state, mode_switch[mode])
+                restore_parcels()
+                try:
+                    it = self.run(
+                        farms,
+                        model_selection=central["measured"].model_selection,
+                        values=drawn,
+                        record=False,
+                    )
+                except Exception:
+                    failed[mode] += 1
+                    continue
+                for k, v in it.impacts.items():
+                    impact_samples[mode][k].append(v)
+                for g in GASES:
+                    gas_samples[mode][g].append(it.ledger.total(g))
+
+        # Restore the original ration definition (idempotence).
+        _set_ration_mode(ration_state, "measured")
+        restore_parcels()
+
+        out: Dict[str, Any] = {
+            "sim_id": "ration_comparison",
+            "method": "paired Monte-Carlo",
+            "n_iterations": n_iterations,
+            "seed": seed,
+            "failed_iterations": failed,
+            "model_selection": summary,
+        }
+
+        indicators = list(central["measured"].impacts)
+        for indicator in indicators:
+            ipcc_s = impact_samples["ipcc_equations"][indicator]
+            meas_s = impact_samples["measured"][indicator]
+            n_pairs = min(len(ipcc_s), len(meas_s))
+            paired_diff = [
+                meas_s[i] - ipcc_s[i] for i in range(n_pairs)
+            ]
+            ipcc_stats = _stats(ipcc_s)
+            meas_stats = _stats(meas_s)
+            sd_ipcc = ipcc_stats["sd"]
+            sd_meas = meas_stats["sd"]
+            precision_gain = float("nan")
+            if sd_ipcc > 0 and not np.isnan(sd_meas):
+                precision_gain = 1.0 - sd_meas / sd_ipcc
+            out[indicator] = {
+                "ipcc_equations": ipcc_stats,
+                "measured": meas_stats,
+                "paired_difference": _stats(paired_diff),
+                "precision_gain_sd": precision_gain,
+            }
+
+        for gas in GASES:
+            ipcc_s = gas_samples["ipcc_equations"][gas]
+            meas_s = gas_samples["measured"][gas]
+            if len(ipcc_s) == 0 or len(meas_s) == 0:
+                continue
+            n_pairs = min(len(ipcc_s), len(meas_s))
+            paired_diff = [meas_s[i] - ipcc_s[i] for i in range(n_pairs)]
+            ipcc_stats = _stats(ipcc_s)
+            meas_stats = _stats(meas_s)
+            sd_ipcc = ipcc_stats["sd"]
+            sd_meas = meas_stats["sd"]
+            precision_gain = float("nan")
+            if sd_ipcc > 0 and not np.isnan(sd_meas):
+                precision_gain = 1.0 - sd_meas / sd_ipcc
+            out[f"{gas}_totals"] = {
+                "ipcc_equations": ipcc_stats,
+                "measured": meas_stats,
+                "paired_difference": _stats(paired_diff),
+                "precision_gain_sd": precision_gain,
+            }
+
+        if record:
+            self._record(
+                central["measured"],
+                summary,
+                central_values,
+                uncertainty={
+                    k: v for k, v in out.items()
+                    if k not in ("sim_id", "method")
+                },
+            )
+        return out

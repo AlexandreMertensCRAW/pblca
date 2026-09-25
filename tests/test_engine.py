@@ -436,3 +436,64 @@ class TestEngine:
     def test_empty_farm_error(self, engine):
         with pytest.raises(ValueError):
             engine.run([])
+
+    # ------------------------------------------------------------------
+    # Paired comparison of the ration-definition modes
+    # ------------------------------------------------------------------
+    def test_ration_comparison_requires_measures(self, engine, farm):
+        # No measured values anywhere: the comparison is meaningless.
+        with pytest.raises(ValueError):
+            engine.run_ration_comparison(farm, n_iterations=5, record=False)
+
+    def test_ration_comparison_reproducible(self, engine, farm):
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        c1 = engine.run_ration_comparison(
+            farm, n_iterations=25, seed=7, record=False
+        )
+        c2 = engine.run_ration_comparison(
+            farm, n_iterations=25, seed=7, record=False
+        )
+        assert c1["gwp100"]["measured"]["mean"] == pytest.approx(
+            c2["gwp100"]["measured"]["mean"]
+        )
+        assert c1["gwp100"]["ipcc_equations"]["mean"] == pytest.approx(
+            c2["gwp100"]["ipcc_equations"]["mean"]
+        )
+        # Idempotence: the measured values are restored afterwards.
+        assert all(a.dmi_measured == 7.0 for a in farm.animals)
+
+    def test_ration_comparison_shared_draw(self, engine, farm):
+        """Requirement: the two evaluations of one iteration must share
+        the SAME parameter draw (paired comparison)."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        c = engine.run_ration_comparison(
+            farm, n_iterations=25, seed=7, record=False
+        )
+        g = c["gwp100"]
+        # Identical rations imposed on every group in both modes: the
+        # non-enteric part is identical, and the paired difference must
+        # be exactly the enteric+manure shift, with n = n_iterations.
+        assert g["paired_difference"]["n"] == 25
+        assert c["failed_iterations"] == {"ipcc_equations": 0, "measured": 0}
+        # No draw lost: both modes ran every iteration.
+        assert g["ipcc_equations"]["n"] == 25
+        assert g["measured"]["n"] == 25
+
+    def test_ration_comparison_measured_preciser(self, engine, farm):
+        """With measured rations, the enteric-energy parameters (Cfi,
+        Ca, Ym...) no longer propagate: the sd of GWP100 must shrink."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        c = engine.run_ration_comparison(
+            farm, n_iterations=150, seed=11, record=False
+        )
+        g = c["gwp100"]
+        sd_ipcc = g["ipcc_equations"]["sd"]
+        sd_meas = g["measured"]["sd"]
+        assert sd_meas < sd_ipcc
+        assert g["precision_gain_sd"] > 0

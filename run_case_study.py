@@ -3,8 +3,10 @@
 Runs:
   1. the central-value simulation (Tier-2, then Tier-3 Mills),
   2. uncertainty propagation by Monte-Carlo (500 iterations),
-  3. JSON storage (one entry per simulation),
-  4. a summary display (inventory per gas + indicators).
+  3. a paired comparison of the two ration-definition modes
+     (IPCC equations vs measured rations, 500 iterations),
+  4. JSON storage (one entry per simulation),
+  5. a summary display (inventory per gas + indicators).
 
 Usage:
 
@@ -62,7 +64,42 @@ def main() -> None:
     print(f"  Failed iterations: {mc['failed_iterations']}")
 
     # ------------------------------------------------------------------
-    # 3. Detailed inventory (layer 2, traceability)
+    # 3. Paired comparison: IPCC equations vs measured rations
+    # ------------------------------------------------------------------
+    # Illustrative on-farm measured intakes (kg DM/head/d per class).
+    measured_dmi = {
+        "veaux_0_6mois": 4.2,
+        "jeunes_6_12mois": 7.4,
+        "engraissés_12_21mois": 10.2,
+    }
+    for a in farm.animals:
+        a.dmi_measured = measured_dmi[a.key]
+        a.ge_measured = a.dmi_measured * 18.45
+    print("\n--- Paired Monte-Carlo: IPCC equations vs measured rations ---")
+    cmp_ = engine.run_ration_comparison(
+        farm, n_iterations=500, seed=2024, record=True
+    )
+    g = cmp_["gwp100"]
+    for mode, label in (
+        ("ipcc_equations", "IPCC equations"),
+        ("measured", "Measured rations"),
+    ):
+        st = g[mode]
+        print(
+            f"  {label:18s}: mean={st['mean']:9.0f}  sd={st['sd']:7.0f}"
+            f"  p5={st['p5']:9.0f}  p95={st['p95']:9.0f}"
+        )
+    d = g["paired_difference"]
+    print(
+        f"  Paired difference : mean={d['mean']:9.0f}  sd={d['sd']:7.0f}"
+    )
+    print(
+        f"  Precision gain on sd (GWP100): {g['precision_gain_sd'] * 100:.1f} %"
+    )
+    print("  Failed iterations:", cmp_["failed_iterations"])
+
+    # ------------------------------------------------------------------
+    # 4. Detailed inventory (layer 2, traceability)
     # ------------------------------------------------------------------
     r = engine.run(farm, model_selection={"enteric_ch4": "tier3_mills"}, record=False)
     print("\n--- Inventory by source (kg/yr) ---")
@@ -71,7 +108,7 @@ def main() -> None:
         print(f"  {source:30s} {' | '.join(parts)}")
 
     # ------------------------------------------------------------------
-    # 4. JSON save (one entry per simulation)
+    # 5. JSON save (one entry per simulation)
     # ------------------------------------------------------------------
     engine.datastore.save("results.json")
     print(f"\nResults saved to results.json ({len(engine.datastore)} simulations).")
