@@ -86,6 +86,37 @@ class AnimalGroup:
             (the ratio GE = DMI × diet_ge_density is preserved, hence
             no spurious coherence warnings). The central run uses the
             unperturbed measured values.
+        diet_om: organic-matter content of the diet, as a fraction of
+            dry matter (kg OM/kg DM, typically 0.90-0.93 for farm
+            diets; tables INRA 2018). Required by the Tier-3 variants
+            ``tier3_sauvant2011`` (enteric) and ``tier3_eugene2019``
+            (manure) — an error is raised if it is missing when one
+            of these variants is selected. Do not confuse with
+            ``diet_de`` (energy digestibility, dimensionless fraction
+            of the gross energy, IPCC Eq. 10.16) or ``diet_omd``
+            (organic-matter digestibility).
+        diet_omd: apparent digestibility of the organic matter of the
+            diet (kg digestible OM/kg ingested OM, fraction 0-1), from
+            feed tables or in vivo measurements (tables INRA 2018).
+            Required by the Tier-3 variants ``tier3_sauvant2011`` and
+            ``tier3_eugene2019`` — an error is raised if it is missing
+            when one of them is selected. IMPORTANT distinction with
+            the other digestibility fields: ``diet_de`` is the ENERGY
+            digestibility (DE%, digestible energy / gross energy,
+            fraction of GE — used by the IPCC Tier-2 energy chain and
+            the FAO Ym equation), whereas ``diet_omd`` is the ORGANIC
+            MATTER digestibility (dMO, fraction of the ingested
+            organic matter — used by the INRA Tier-3 system, Sauvant
+            et al. 2011 / Eugène et al. 2019). For a given diet the
+            two values are close but NOT identical (energy digestion
+            includes fats and fermentation gases); the user must
+            provide each one explicitly from its own reference source.
+            OMD feeds: (i) the digestible organic matter intake
+            DOMI = DMI × diet_om × diet_omd (enteric Tier-3 predictor)
+            and (ii) the non-digestible organic matter excreted
+            NDOM = DMI × diet_om × (1 − diet_omd), used as the volatile
+            solids of the manure Tier-3 variant (enteric ↔ manure
+            consistency, Eugène et al. 2019).
 
     Two ration-definition modes are therefore available per group:
 
@@ -118,6 +149,8 @@ class AnimalGroup:
     system: Optional[str] = None
     ch4_measured_ahcs: Optional[float] = None
     ch4_measured_ahcs_rel_sd: Optional[float] = None
+    diet_om: Optional[float] = None
+    diet_omd: Optional[float] = None
 
     @property
     def ration_mode(self) -> str:

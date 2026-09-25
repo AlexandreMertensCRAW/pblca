@@ -309,6 +309,52 @@ def build_default_parameter_set() -> ParameterSet:
         ),
         description="Tier-3: saturation rate constant (per kg DM intake).",
     )
+    # Tier-3: Sauvant et al. (2011) — INRA meta-analytic equation [9]
+    # CH4 (g/kg MOD) = a0 + a1·NA + a2·NA² + b1·PCO + b2·PCO² + b3·NA·PCO
+    # with NA = DMI as % of average body weight and PCO = concentrate
+    # proportion of the diet (DM fraction). Equation [9] of the paper
+    # combines the feeding-level and concentrate effects with their
+    # interaction (Rumener database: n = 450 treatments, 158
+    # experiments, residual ETR = 2.3 g/kg MOD).
+    _REF_S11 = Reference(
+        "Sauvant et al. 2011, INRA Prod. Anim. 24(5):433-446, eq. [9]"
+    )
+    ps.add(
+        "t3_sauv_a0", 45.42, "g CH4/kg MOD",
+        distribution="normal", sd=2.3,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: intercept (g CH4/kg MOD).",
+    )
+    ps.add(
+        "t3_sauv_a1", -6.66, "g CH4/kg MOD per % BW",
+        distribution="normal", sd=0.5,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: linear feeding-level coefficient.",
+    )
+    ps.add(
+        "t3_sauv_a2", 0.75, "g CH4/kg MOD per (% BW)²",
+        distribution="normal", sd=0.08,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: quadratic feeding-level coefficient.",
+    )
+    ps.add(
+        "t3_sauv_b1", 19.65, "g CH4/kg MOD per unit PCO",
+        distribution="normal", sd=2.0,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: linear concentrate coefficient.",
+    )
+    ps.add(
+        "t3_sauv_b2", -35.0, "g CH4/kg MOD per PCO²",
+        distribution="normal", sd=4.0,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: quadratic concentrate coefficient.",
+    )
+    ps.add(
+        "t3_sauv_b3", -2.69, "g CH4/kg MOD per % BW per unit PCO",
+        distribution="normal", sd=0.4,
+        reference=_REF_S11,
+        description="Tier-3 Sauvant 2011 eq. [9]: feeding level × concentrate interaction.",
+    )
     ps.add(
         "cp_feed", 0.14, "kg N/kg DM intake",
         distribution="normal", sd=0.015,

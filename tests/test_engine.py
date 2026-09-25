@@ -554,6 +554,166 @@ class TestProcesses:
         # Idempotence: measured values restored.
         assert all(a.ch4_measured_ahcs == 250.0 for a in farm.animals)
 
+    def test_tier3_sauvant2011_central_value(self, engine):
+        # Hand-checked central value of the INRA Tier-3 enteric equation
+        # (Sauvant et al. 2011, eq. [9]) on the first case-study group.
+        from pblca.processes.enteric import _energy_chain
+        from pblca.registry import ModelContext
+
+        farm = build_case_study_farm(engine.params)
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        g = farm.animals[0]
+        e = _energy_chain(ctx, g)
+        dmi, bw = e["dmi_kg_day"], e["bw_avg"]
+        na = 100.0 * dmi / bw
+        pco = g.share_concentrate
+        domi = dmi * g.diet_om * g.diet_omd
+        v = ps.central_values()
+        ch4_g_kg_modi = (
+            v["t3_sauv_a0"] + v["t3_sauv_a1"] * na + v["t3_sauv_a2"] * na**2
+            + v["t3_sauv_b1"] * pco + v["t3_sauv_b2"] * pco**2
+            + v["t3_sauv_b3"] * na * pco
+        )
+        expected = ch4_g_kg_modi * domi * g.days * g.n_head / 1000.0
+        # Exact per-group check via the model function trace.
+        from pblca.processes.enteric import enteric_tier3_sauvant2011
+        res = enteric_tier3_sauvant2011(ctx)
+        assert res.trace["per_group"][g.key]["ch4_kg"] == pytest.approx(expected)
+        assert res.model_name == "tier3_sauvant2011"
+
+    def test_tier3_sauvant2011_missing_diet_fields_raises(self):
+        # The INRA Tier-3 variant requires explicit diet_om/diet_omd:
+        # ERROR logged, no silent fallback.
+        from pblca.registry import AnimalGroup
+
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+        )
+        farm2 = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        ctx = ModelContext(farm2, ps, ps.central_values(), log)
+        from pblca.processes.enteric import enteric_tier3_sauvant2011
+        with pytest.raises(ValueError):
+            enteric_tier3_sauvant2011(ctx)
+        assert log.n_errors == 1
+
+    def test_tier3_sauvant2011_domain_warnings(self):
+        # Feeding level outside the Rumener calibration domain and
+        # very high concentrate share: WARNINGs are logged.
+        from pblca.registry import AnimalGroup
+
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=400, bw_end=450, days=100,
+            diet_de=0.70, diet_ge_density=18.45,
+            dmi_measured=2.0,  # NA ≈ 0.5 % BW: below the Rumener domain
+            diet_om=0.91, diet_omd=0.72,
+            share_concentrate=0.70,
+        )
+        farm2 = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        ctx = ModelContext(farm2, ps, ps.central_values(), log)
+        from pblca.processes.enteric import enteric_tier3_sauvant2011
+        enteric_tier3_sauvant2011(ctx)
+        msgs = [m["message"] for m in log.as_list() if m["level"] == "WARNING"]
+        assert any("feeding level" in m.lower() or "NA=" in m for m in msgs)
+        assert any("concentrate" in m.lower() for m in msgs)
+
+    def test_manure_tier3_eugene2019_vs_tier2(self, engine):
+        # Manure Tier-3: VS = non-digestible OM (DMI × diet_om × (1-omd))
+        # instead of the IPCC Eq. 10.24 pathway; both variants run and
+        # differ, and the Tier-3 value is hand-checkable.
+        from pblca.processes.manure import manure_ch4_eugene2019
+        from pblca.processes.enteric import _energy_chain
+
+        farm = build_case_study_farm(engine.params)
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        res = manure_ch4_eugene2019(ctx)
+        assert res.model_name == "tier3_eugene2019"
+        assert res.ch4_kg > 0
+        # Hand check: sum over all groups of
+        # DMI × diet_om × (1-omd) × 365 × B0 × Σ MCF×share × n_head.
+        v = ps.central_values()
+        mcf_sum = sum(
+            (v["mcf_prp"] if sys_ == "pasture" else v["mcf_solid_storage"])
+            * s for sys_, s in farm.manure_split.items()
+        )
+        expected = 0.0
+        for g in farm.animals:
+            e = _energy_chain(ctx, g)
+            vs_day = e["dmi_kg_day"] * g.diet_om * (1.0 - g.diet_omd)
+            expected += (
+                vs_day * 365.0 * v["bo_cattle_manure"] * mcf_sum * g.n_head
+            )
+        assert res.ch4_kg == pytest.approx(expected, rel=1e-9)
+        # VS flux traced.
+        assert res.fluxes["vs_total_kg"] == pytest.approx(
+            sum(
+                _energy_chain(ctx, g)["dmi_kg_day"]
+                * g.diet_om * (1.0 - g.diet_omd) * 365.0 * g.n_head
+                for g in farm.animals
+            ), rel=1e-9,
+        )
+        # Registered and selectable through the engine.
+        r3 = engine.run(
+            farm, model_selection={"manure_ch4": "tier3_eugene2019"},
+            record=False,
+        )
+        r2 = engine.run(
+            farm, model_selection={"manure_ch4": "ipcc_tier2"}, record=False
+        )
+        assert r3.impacts["gwp100"] != r2.impacts["gwp100"]
+
+    def test_manure_tier3_missing_diet_fields_raises(self):
+        from pblca.registry import AnimalGroup
+
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45,
+        )
+        farm2 = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={"solid_storage": 1.0},
+        )
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        ctx = ModelContext(farm2, ps, ps.central_values(), log)
+        from pblca.processes.manure import manure_ch4_eugene2019
+        with pytest.raises(ValueError):
+            manure_ch4_eugene2019(ctx)
+        assert log.n_errors == 1
+
+    def test_tier3_inra_variants_registered_and_mc_reproducible(self, engine, farm):
+        # Both INRA Tier-3 variants are registered, run together, and
+        # the Monte-Carlo is reproducible for a given seed.
+        sel = {
+            "enteric_ch4": "tier3_sauvant2011",
+            "manure_ch4": "tier3_eugene2019",
+        }
+        mc1 = engine.run_monte_carlo(
+            farm, n_iterations=30, seed=7, model_selection=sel, record=False
+        )
+        mc2 = engine.run_monte_carlo(
+            farm, n_iterations=30, seed=7, model_selection=sel, record=False
+        )
+        assert mc1["impacts"]["gwp100"]["mean"] == pytest.approx(
+            mc2["impacts"]["gwp100"]["mean"]
+        )
+        assert mc1["impacts"]["gwp100"]["sd"] > 0
+        assert mc1["impacts"]["gwp100"]["n"] == 30
+
     def test_soil_n2o_proportional_to_inputs(self):
         from pblca.processes.soil import soil_n2o
         from pblca.registry import LandParcel

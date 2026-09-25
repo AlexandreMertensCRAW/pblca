@@ -21,6 +21,13 @@ simulation — alternative-model testability requirement):
   2003, via Ellis et al. 2009): CH4 (MJ/d) = a × (1 − e^(−k × DMI)),
   with a = 10.8 MJ/d and k = 0.141 (kg DM)^-1. DMI is estimated with
   the IPCC energy chain (GE / 18.45).
+* ``tier3_sauvant2011``: INRA Tier-3 meta-analytic equation [9]
+  (Sauvant et al. 2011): CH4 (g/kg DOMI) = 45.42 − 6.66·NA +
+  0.75·NA² + 19.65·PCO − 35.0·PCO² − 2.69·NA·PCO with NA = DMI in %
+  of body weight and PCO = concentrate share. Requires the explicit
+  INRA diet fields ``diet_om`` and ``diet_omd`` (organic matter content
+  and organic-matter digestibility of the diet); it is the basis of
+  the French Tier-3 inventory method (Eugène et al. 2019).
 
 Ration definition: each ``AnimalGroup`` can either rely on the IPCC
 energy chain (default) or carry measured ``dmi_measured``/``ge_measured``
@@ -45,6 +52,11 @@ REF_T2_FAO = (
     "IPCC 2006 Vol.4 Ch.10, Eq. 10.3-10.16"
 )
 REF_T3 = "Ellis et al. 2009 (exponential saturation, after Mills et al. 2003)"
+REF_T3_S11 = (
+    "Sauvant et al. 2011, INRA Prod. Anim. 24(5):433-446, eq. [9] "
+    "(meta-analysis Rumener database; basis of the INRA Tier-3 system "
+    "used by the French inventory, Eugène et al. 2019)"
+)
 
 # Registry of on-farm CH4 measurement methods. Key = method suffix
 # used in the AnimalGroup field names (ch4_measured_<method> and
@@ -451,6 +463,116 @@ def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
     return res
 
 
+def _domi(ctx: ModelContext, g) -> Dict[str, float]:
+    """Digestible organic matter intake and derived quantities.
+
+    Requires the explicit INRA diet fields (error when missing, no
+    hidden default — traceability requirement):
+
+    * ``diet_om``  : organic-matter content of the diet (kg OM/kg DM);
+    * ``diet_omd`` : organic-matter digestibility (kg dig. OM/kg OM) —
+      NOT the energy digestibility ``diet_de``.
+
+    Returns:
+        a {domi_kg_day, ndom_kg_day} dictionary, where ndom is the
+        non-digestible organic matter excreted (kg OM/head/d, volatile
+        solids proxy of the manure Tier-3 variant).
+    """
+    if g.diet_om is None or g.diet_omd is None:
+        missing = [
+            name for name, val in (("diet_om", g.diet_om), ("diet_omd", g.diet_omd))
+            if val is None
+        ]
+        ctx.logger.error(
+            "enteric",
+            f"Group {g.key}: field(s) {missing} required by the INRA "
+            f"Tier-3 variants are not set — provide them from feed "
+            f"tables (INRA 2018) or select another variant",
+        )
+        raise ValueError(
+            f"{missing} missing for group {g.key} (INRA Tier-3 variants)"
+        )
+    e = _energy_chain(ctx, g)
+    dmi = e["dmi_kg_day"]
+    domi = dmi * g.diet_om * g.diet_omd
+    ndom = dmi * g.diet_om * (1.0 - g.diet_omd)
+    return {"domi_kg_day": domi, "ndom_kg_day": ndom}
+
+
+def enteric_tier3_sauvant2011(ctx: ModelContext) -> ModelResult:
+    """Enteric methane with the INRA Tier-3 equation (Sauvant et al.
+    2011, eq. [9]) — the meta-analytic basis of the French Tier-3
+    inventory method (Eugène et al. 2019).
+
+    CH4 (g/kg DOMI) = a0 + a1·NA + a2·NA² + b1·PCO + b2·PCO² + b3·NA·PCO
+
+    where:
+
+    * NA (feeding level) = DMI as a percentage of the average live
+      weight (MSI%PV in the source; domain ≈ 1.2-3.5 % BW);
+    * PCO = concentrate proportion of the diet (``share_concentrate``);
+    * DOMI = DMI × diet_om × diet_omd, the digestible organic matter
+      intake (kg/head/d).
+
+    DMI comes from the shared energy chain (IPCC equations or measured
+    ration, so the variant applies to both ration modes); the
+    coefficients are Monte-Carlo parameters traced to the source.
+
+    Args:
+        ctx: model context.
+
+    Returns:
+        ModelResult with the total ch4_kg and a trace per age class.
+    """
+    v = ctx.v
+    res = ModelResult(model_name="tier3_sauvant2011")
+    res.trace["per_group"] = {}
+    total = 0.0
+    for g in ctx.farm.animals:
+        e = _energy_chain(ctx, g)
+        dmi = e["dmi_kg_day"]
+        d = _domi(ctx, g)
+        domi = d["domi_kg_day"]
+        bw_avg = e["bw_avg"]
+        na = 100.0 * dmi / bw_avg if bw_avg > 0 else 0.0
+        pco = g.share_concentrate
+        if na < 1.0 or na > 4.0:
+            ctx.logger.warn(
+                "enteric_t3",
+                f"Feeding level NA={na:.2f} % BW outside the calibration "
+                f"domain (≈1.2-3.5 % BW, Rumener database) for group "
+                f"{g.key} — eq. [9] extrapolated",
+            )
+        if pco > 0.6:
+            ctx.logger.warn(
+                "enteric_t3",
+                f"Concentrate share {pco:.2f} above the Rumener "
+                f"calibration range for group {g.key} — eq. [9] "
+                f"extrapolated",
+            )
+        ch4_g_kg_modi = (
+            v("t3_sauv_a0")
+            + v("t3_sauv_a1") * na
+            + v("t3_sauv_a2") * na**2
+            + v("t3_sauv_b1") * pco
+            + v("t3_sauv_b2") * pco**2
+            + v("t3_sauv_b3") * na * pco
+        )
+        ch4_kg_year = ch4_g_kg_modi * domi * g.days * g.n_head / 1000.0
+        total += ch4_kg_year
+        res.trace["per_group"][g.key] = {
+            "dmi_kg_day": dmi,
+            "domi_kg_day": domi,
+            "na_pct_bw": na,
+            "pco": pco,
+            "ch4_g_kg_modi": ch4_g_kg_modi,
+            "ch4_kg": ch4_kg_year,
+            "n_head": g.n_head,
+        }
+    res.ch4_kg = total
+    return res
+
+
 SPECS = [
     ModelSpec(
         slot="enteric_ch4",
@@ -494,6 +616,20 @@ SPECS = [
         func=enteric_tier3_mills,
         reference=REF_T3,
         description="Exponential saturation CH4 = 10.8×(1−e^(−0.141×DMI)).",
+    ),
+    ModelSpec(
+        slot="enteric_ch4",
+        variant="tier3_sauvant2011",
+        tier="Tier-3",
+        func=enteric_tier3_sauvant2011,
+        reference=REF_T3_S11,
+        description=(
+            "INRA Tier-3 (Sauvant et al. 2011 eq. [9]): CH4 (g/kg DOMI) = "
+            "45.42 − 6.66·NA + 0.75·NA² + 19.65·PCO − 35.0·PCO² − "
+            "2.69·NA·PCO, with NA = DMI in % BW and DOMI = DMI × diet_om "
+            "× diet_omd; basis of the French Tier-3 inventory (Eugène "
+            "et al. 2019)."
+        ),
     ),
 ]
 

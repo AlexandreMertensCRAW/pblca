@@ -9,9 +9,13 @@ Covers:
     spread organic fertiliser (consistency between the manure and soil
     N2O subsystems).
 
-A single ``ipcc_tier2`` variant is registered for each of the
-``manure_ch4`` and ``manure_n2o`` slots; the universal interface allows
-Tier-3 variants to be added (e.g. a dynamic storage model).
+A single ``ipcc_tier2`` variant is registered for the ``manure_n2o``
+slot; for ``manure_ch4`` a Tier-3 INRA variant (``tier3_eugene2019``)
+is also registered: same VS × B0 × MCF structure, but VS is the
+non-digestible organic matter excreted (DMI × diet_om × (1 −
+diet_omd)), consistent with the enteric ``tier3_sauvant2011`` variant
+(Eugène et al. 2019). The universal interface allows further Tier-3
+variants to be added (e.g. a dynamic storage model).
 """
 
 from __future__ import annotations
@@ -19,6 +23,10 @@ from __future__ import annotations
 from ..registry import ModelContext, ModelResult, ModelSpec
 
 REF = "IPCC 2006/2019, Vol.4 Ch.10, Eq. 10.22-10.34"
+REF_T3_EUG = (
+    "Eugène et al. 2019, J. Environ. Manage. 231:982-988 "
+    "(INRA Tier-3 French inventory method: VS = non-digestible OM)"
+)
 
 
 def _per_group_fluxes(ctx: ModelContext) -> dict:
@@ -168,6 +176,97 @@ def manure_n2o(ctx: ModelContext) -> ModelResult:
     return res
 
 
+def _vs_eugene(ctx: ModelContext, g) -> float:
+    """Volatile solids of a group, INRA Tier-3 pathway (Eugène et al.
+    2019): VS ≈ non-digestible organic matter excreted.
+
+    VS (kg OM/head/d) = DMI × diet_om × (1 − diet_omd)
+
+    where diet_om is the organic-matter content of the diet (kg OM/kg
+    DM) and diet_omd the organic-matter digestibility (kg dig.
+    OM/kg OM) — both explicit ``AnimalGroup`` fields; an error is
+    raised when missing (no hidden default). DMI comes from the
+    shared energy chain (``_energy_chain``), so the enteric and manure
+    emissions rest on the same intake — the enteric ↔ manure
+    consistency of the INRA Tier-3 method: the digestible OM predicts
+    enteric CH4, the non-digestible OM predicts manure CH4.
+
+    Args:
+        ctx: model context (parameters + current values).
+        g: animal group (age class).
+
+    Returns:
+        VS in kg OM/head/day.
+    """
+    from .enteric import _energy_chain
+
+    if g.diet_om is None or g.diet_omd is None:
+        missing = [
+            name for name, val in (("diet_om", g.diet_om), ("diet_omd", g.diet_omd))
+            if val is None
+        ]
+        ctx.logger.error(
+            "manure_ch4",
+            f"Group {g.key}: field(s) {missing} required by the INRA "
+            f"Tier-3 variant are not set — provide them from feed "
+            f"tables (INRA 2018) or select another variant",
+        )
+        raise ValueError(
+            f"{missing} missing for group {g.key} (INRA Tier-3 variant)"
+        )
+    e = _energy_chain(ctx, g)
+    return e["dmi_kg_day"] * g.diet_om * (1.0 - g.diet_omd)
+
+
+def manure_ch4_eugene2019(ctx: ModelContext) -> ModelResult:
+    """CH4 from manure management, INRA Tier-3 pathway (Eugène et al.
+    2019).
+
+    Same IPCC structure as the Tier-2 variant,
+
+        CH4 = VS × B0 × MCF × AWMS,
+
+    but VS is the non-digestible organic matter excreted,
+    VS = DMI × diet_om × (1 − diet_omd), derived from the same diet
+    fields as the enteric ``tier3_sauvant2011`` variant (enteric ↔
+    manure consistency). B0 and MCF remain the IPCC tabulated values
+    (shared Monte-Carlo parameters with the Tier-2 variant).
+
+    Args:
+        ctx: model context.
+
+    Returns:
+        ModelResult with the total ch4_kg and a trace per system.
+    """
+    res = ModelResult(model_name="tier3_eugene2019")
+    total = 0.0
+    res.trace["systems"] = {}
+    for g in ctx.farm.animals:
+        vs_day = _vs_eugene(ctx, g)
+        vs_year = vs_day * 365.0
+        for system, share in ctx.farm.manure_split.items():
+            if share == 0:
+                continue
+            if system == "pasture":
+                mcf = ctx.v("mcf_prp")
+            elif system == "solid_storage":
+                mcf = ctx.v("mcf_solid_storage")
+            else:
+                ctx.logger.error(
+                    "manure_ch4", f"Unknown manure system: {system}"
+                )
+                continue
+            ch4 = vs_year * ctx.v("bo_cattle_manure") * mcf * share * g.n_head
+            res.trace["systems"].setdefault(system, 0.0)
+            res.trace["systems"][system] += ch4
+            total += ch4
+    res.ch4_kg = total
+    res.fluxes["vs_total_kg"] = sum(
+        _vs_eugene(ctx, g) * 365.0 * g.n_head for g in ctx.farm.animals
+    )
+    return res
+
+
 SPECS = [
     ModelSpec(
         slot="manure_ch4",
@@ -176,6 +275,19 @@ SPECS = [
         func=manure_ch4,
         reference=REF,
         description="CH4 = VS × B0 × MCF (solid storage + pasture).",
+    ),
+    ModelSpec(
+        slot="manure_ch4",
+        variant="tier3_eugene2019",
+        tier="Tier-3",
+        func=manure_ch4_eugene2019,
+        reference=REF_T3_EUG,
+        description=(
+            "INRA Tier-3 (Eugène et al. 2019): CH4 = VS × B0 × MCF with "
+            "VS = DMI × diet_om × (1 − diet_omd) (non-digestible OM "
+            "excreted) — consistent with the enteric tier3_sauvant2011 "
+            "variant (same DOMI/NDOM split of the intake)."
+        ),
     ),
     ModelSpec(
         slot="manure_n2o",

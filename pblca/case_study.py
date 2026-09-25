@@ -57,6 +57,10 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             n_head=n_purchased * 183 / 365,
             bw_start=50, bw_end=200, days=183,
             diet_de=0.70, diet_ge_density=18.45,
+            # INRA Tier-3 fields: OM content of the diet and OM
+            # digestibility (feed tables INRA 2018, indicative values;
+            # dMO is NOT dE: see AnimalGroup docstring).
+            diet_om=0.91, diet_omd=0.72,
             share_concentrate=0.10,  # milk + starter concentrate
             grazing=0.5,
             system="mixed",  # barn + pasture, IPCC 2019 Table 10.5
@@ -66,6 +70,7 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             n_head=n_purchased * 182 / 365,
             bw_start=200, bw_end=350, days=182,
             diet_de=0.65, diet_ge_density=18.45,
+            diet_om=0.91, diet_omd=0.67,
             share_concentrate=0.20,
             grazing=0.8,
             system="mixed",
@@ -75,6 +80,7 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             n_head=n_purchased * 265 / 365,
             bw_start=350, bw_end=600, days=265,
             diet_de=0.62, diet_ge_density=18.45,
+            diet_om=0.91, diet_omd=0.64,
             share_concentrate=0.35,  # grass + concentrates + co-products
             grazing=0.7,
             system="mixed",
