@@ -57,6 +57,15 @@ class AnimalGroup:
         ge_measured: on-farm measured gross energy intake (MJ/head/d).
             When set (positive), it bypasses the IPCC energy-chain
             estimate for GE.
+        ration_rel_sd: relative standard deviation of the measured-
+            ration quantification error (e.g. 0.05 for ±5 %). During
+            Monte-Carlo, one multiplicative lognormal factor per group
+            and per iteration (median 1) is drawn and applied to BOTH
+            ``dmi_measured`` and ``ge_measured``: the quantification
+            error of the ration scales intake and gross energy together
+            (the ratio GE = DMI × diet_ge_density is preserved, hence
+            no spurious coherence warnings). The central run uses the
+            unperturbed measured values.
 
     Two ration-definition modes are therefore available per group:
 
@@ -85,6 +94,7 @@ class AnimalGroup:
     grazing: float = 1.0
     dmi_measured: Optional[float] = None
     ge_measured: Optional[float] = None
+    ration_rel_sd: Optional[float] = None
 
     @property
     def ration_mode(self) -> str:

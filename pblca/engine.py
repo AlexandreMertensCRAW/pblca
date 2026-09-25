@@ -143,19 +143,60 @@ def _stats(samples: List[float]) -> Dict[str, float]:
 def _set_ration_mode(ration_state: List[tuple], mode: str) -> None:
     """Force the ration-definition mode on the animal groups (in place).
 
-    ``ration_state`` is a snapshot of (group, dmi_measured, ge_measured)
-    tuples taken before the comparison. ``mode`` is either ``"ipcc"``
-    (measures temporarily removed: the IPCC energy chain is used
-    everywhere) or ``"measured"`` (the snapshot values are restored;
-    groups carrying measures use them).
+    ``ration_state`` is a snapshot of
+    (group, dmi_measured, ge_measured, ration_rel_sd) tuples taken
+    before the comparison. ``mode`` is either ``"ipcc"`` (measures
+    temporarily removed: the IPCC energy chain is used everywhere) or
+    ``"measured"`` (the snapshot values are restored; groups carrying
+    measures use them).
     """
-    for group, dmi, ge in ration_state:
+    for group, dmi, ge, _rel_sd in ration_state:
         if mode == "ipcc":
             group.dmi_measured = None
             group.ge_measured = None
         else:
             group.dmi_measured = dmi
             group.ge_measured = ge
+
+
+def _perturb_measured_rations(
+    ration_state: List[tuple], rng: "np.random.Generator"
+) -> None:
+    """Apply the measured-ration quantification error (in place).
+
+    Uncertainty of the on-farm measurements: one multiplicative
+    lognormal factor (median 1, sigma = ``ration_rel_sd``) is drawn per
+    group and per Monte-Carlo iteration and applied to BOTH the
+    measured DMI and the measured GE. Intake and gross energy are
+    scaled together: the ratio GE = DMI × diet_ge_density is preserved
+    and the perturbation represents a genuine ration-quantification
+    error (over/under-estimation of the distributed quantity), not a
+    feed-analysis error. Groups without measures or without
+    ``ration_rel_sd`` are left untouched.
+
+    Call AFTER ``_set_ration_mode(..., "measured")``; the snapshot
+    values are restored by the next ``_set_ration_mode`` call.
+    """
+    for group, dmi, ge, rel_sd in ration_state:
+        if dmi is None and ge is None:
+            continue
+        if not rel_sd or rel_sd <= 0:
+            continue
+        factor = float(rng.lognormal(0.0, rel_sd))
+        if dmi is not None:
+            group.dmi_measured = dmi * factor
+        if ge is not None:
+            group.ge_measured = ge * factor
+
+
+def _ration_snapshot(
+    farms: Sequence[FarmContext],
+) -> List[tuple]:
+    """Snapshot of the ration definition of every animal group."""
+    return [
+        (g, g.dmi_measured, g.ge_measured, g.ration_rel_sd)
+        for f in farms for g in f.animals
+    ]
 
 
 def _distribute_manure_n(farm: FarmContext, n_organic_total: float) -> None:
@@ -375,6 +416,11 @@ class LCAEngine:
                 for p in f.parcels:
                     p.n_organic_spread = base_organic[(f.farm_id, p.key)]
 
+        ration_state = _ration_snapshot(farms)
+        has_measures = any(
+            dmi is not None or ge is not None for _, dmi, ge, _ in ration_state
+        )
+
         # Central simulation (reference). It is recorded through the
         # MC summary entry below (record) — not twice.
         central_values = self.params.central_values()
@@ -394,6 +440,8 @@ class LCAEngine:
         for _ in range(n_iterations):
             drawn = self.params.draw(rng)
             restore_parcels()
+            if has_measures:
+                _perturb_measured_rations(ration_state, rng)
             try:
                 it = self.run(
                     farms,
@@ -409,6 +457,7 @@ class LCAEngine:
             for g in GASES:
                 gas_samples[g].append(it.ledger.total(g))
         restore_parcels()
+        _set_ration_mode(ration_state, "measured")
 
         stats = {k: _stats(v) for k, v in impact_samples.items()}
         gas_stats = {
@@ -459,6 +508,14 @@ class LCAEngine:
         the additional ration information. The respective standard
         deviations quantify its effect on the precision of the result.
 
+        The measured mode also propagates the quantification error of
+        the on-farm measurements: one multiplicative lognormal factor
+        per group and per iteration (median 1, sigma = the group's
+        ``ration_rel_sd``) is applied to both ``dmi_measured`` and
+        ``ge_measured``. With ``ration_rel_sd=None`` (default) the
+        measurements are treated as exact and no perturbation is
+        applied.
+
         Args:
             farms: one farm or a list of farms.
             n_iterations: number of iterations (>0).
@@ -479,11 +536,8 @@ class LCAEngine:
         # Groups without measurements are identical in both modes; a
         # comparison is only meaningful if at least one group carries
         # measured values.
-        ration_state = [
-            (g, g.dmi_measured, g.ge_measured)
-            for f in farms for g in f.animals
-        ]
-        if not any(dmi is not None or ge is not None for _, dmi, ge in ration_state):
+        ration_state = _ration_snapshot(farms)
+        if not any(dmi is not None or ge is not None for _, dmi, ge, _ in ration_state):
             raise ValueError(
                 "run_ration_comparison requires at least one animal group "
                 "with dmi_measured and/or ge_measured set"
@@ -532,7 +586,14 @@ class LCAEngine:
         for _ in range(n_iterations):
             drawn = self.params.draw(rng)
             for mode in modes:
+                # The measured mode propagates the quantification error
+                # of the on-farm measurements: one lognormal factor per
+                # group and per iteration, applied to both DMI and GE.
+                # The ipcc mode ignores the measurements entirely, so
+                # the pairing on the parameter draw is preserved.
                 _set_ration_mode(ration_state, mode_switch[mode])
+                if mode == "measured":
+                    _perturb_measured_rations(ration_state, rng)
                 restore_parcels()
                 try:
                     it = self.run(

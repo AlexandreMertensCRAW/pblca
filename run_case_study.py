@@ -66,7 +66,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Paired comparison: IPCC equations vs measured rations
     # ------------------------------------------------------------------
-    # Illustrative on-farm measured intakes (kg DM/head/d per class).
+    # Illustrative on-farm measured intakes (kg DM/head/d per class),
+    # with a ±10 % ration-quantification error.
     measured_dmi = {
         "veaux_0_6mois": 4.2,
         "jeunes_6_12mois": 7.4,
@@ -75,7 +76,9 @@ def main() -> None:
     for a in farm.animals:
         a.dmi_measured = measured_dmi[a.key]
         a.ge_measured = a.dmi_measured * 18.45
+        a.ration_rel_sd = 0.10
     print("\n--- Paired Monte-Carlo: IPCC equations vs measured rations ---")
+    print("    (measured rations carry a ±10 % quantification error)")
     cmp_ = engine.run_ration_comparison(
         farm, n_iterations=500, seed=2024, record=True
     )

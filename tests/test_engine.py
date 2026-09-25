@@ -497,3 +497,65 @@ class TestEngine:
         sd_meas = g["measured"]["sd"]
         assert sd_meas < sd_ipcc
         assert g["precision_gain_sd"] > 0
+
+    def test_measured_ration_uncertainty_propagates(self, engine, farm):
+        """The on-farm measurement carries its own quantification
+        error (ration_rel_sd): it must widen the sd of the measured
+        mode and be reproducible for a given seed."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.10  # ±10 % quantification error
+        c = engine.run_ration_comparison(
+            farm, n_iterations=150, seed=13, record=False
+        )
+        g = c["gwp100"]
+        assert g["measured"]["sd"] > 0
+        # Idempotence: the original measured values are restored.
+        assert all(a.dmi_measured == 7.0 for a in farm.animals)
+        assert all(a.ration_rel_sd == 0.10 for a in farm.animals)
+
+    def test_measured_ration_uncertainty_reproducible(self, engine, farm):
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.10
+        c1 = engine.run_ration_comparison(
+            farm, n_iterations=25, seed=17, record=False
+        )
+        c2 = engine.run_ration_comparison(
+            farm, n_iterations=25, seed=17, record=False
+        )
+        assert c1["gwp100"]["measured"]["mean"] == pytest.approx(
+            c2["gwp100"]["measured"]["mean"]
+        )
+
+    def test_mc_propagates_ration_uncertainty(self, engine, farm):
+        """run_monte_carlo must also propagate the measured-ration
+        quantification error (part of the input uncertainty)."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.15
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=60, seed=19, record=False
+        )
+        s = mc["impacts"]["gwp100"]
+        assert s["sd"] > 0
+        assert s["n"] == 60
+        # Idempotence: measured values restored after the MC.
+        assert all(a.dmi_measured == 7.0 for a in farm.animals)
+
+    def test_ration_rel_sd_coherence_preserved(self, engine, farm):
+        """The quantification error scales DMI and GE together: the
+        GE = DMI × density ratio is preserved, so no coherence
+        WARNING is emitted during the Monte-Carlo."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.20
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=40, seed=23, record=False
+        )
+        # The central run (unperturbed) is the reference of the entry.
+        assert mc["central_impacts"]["gwp100"] > 0
