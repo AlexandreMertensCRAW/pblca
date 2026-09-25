@@ -1016,3 +1016,45 @@ class TestEngine:
             farm, n_iterations=8, seed=5, record=False,
         )
         assert "iteration_outputs" not in mc2
+
+    def test_monte_carlo_per_group_ch4_stats(self, engine, farm):
+        """MC uncertainty includes per-animal-group enteric CH4 stats:
+        central_kg (unperturbed run) plus {mean, sd, p5, p50, p95, n}.
+        The sum of the group central values matches the enteric CH4
+        recorded in the central ledger exactly, and the JSON entry
+        carries the same section."""
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=15, seed=3, record=True,
+        )
+        groups = mc["enteric_ch4_per_group_kg"]
+        assert set(groups) == {
+            "veaux_0_6mois", "jeunes_6_12mois", "engraissés_12_21mois",
+        }
+        for stats in groups.values():
+            assert stats["n"] == 15
+            for key in ("central_kg", "mean", "sd", "p5", "p50", "p95"):
+                assert key in stats and stats[key] > 0
+            assert stats["p5"] <= stats["p50"] <= stats["p95"]
+        # Central values: exact match with the central run's enteric CH4.
+        central = engine.run(farm, sim_id="central_check", record=False)
+        enteric_kg = sum(
+            e.amount_kg for e in central.ledger.entries()
+            if e.gas == "CH4" and e.source == "enteric"
+        )
+        assert sum(s["central_kg"] for s in groups.values()) == pytest.approx(
+            enteric_kg
+        )
+        # Monte-Carlo means stay close to the central values (same
+        # distributions, 15 iterations).
+        assert sum(s["mean"] for s in groups.values()) == pytest.approx(
+            enteric_kg, rel=0.1
+        )
+        # The JSON entry carries the same per-group section.
+        entry = [
+            e for e in engine.datastore._entries
+            if "uncertainty" in e
+            and "enteric_ch4_per_group_kg" in e["uncertainty"]
+        ][0]
+        assert entry["uncertainty"]["enteric_ch4_per_group_kg"] == groups
+        # Section is JSON-serializable.
+        json.dumps(groups)

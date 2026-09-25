@@ -499,6 +499,16 @@ class LCAEngine:
 
         impact_samples: Dict[str, List[float]] = {k: [] for k in central.impacts}
         gas_samples: Dict[str, List[float]] = {g: [] for g in GASES}
+        # Per-animal-group enteric CH4 samples (the enteric variant
+        # traces ch4_kg per group; a None trace means the selected
+        # variant provides no per-group breakdown — e.g. a variant
+        # that would fail before tracing, the samples stay empty).
+        group_keys = list(
+            central.model_outputs.get("enteric_ch4", {})
+            .get("trace", {})
+            .get("per_group", {})
+        )
+        group_ch4_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
         failed = 0
         iteration_outputs: List[Dict[str, Any]] = []
         for _ in range(n_iterations):
@@ -520,6 +530,15 @@ class LCAEngine:
                 impact_samples[k].append(v)
             for g in GASES:
                 gas_samples[g].append(it.ledger.total(g))
+            for key in group_keys:
+                trace = (
+                    it.model_outputs.get("enteric_ch4", {})
+                    .get("trace", {})
+                    .get("per_group", {})
+                    .get(key)
+                )
+                if trace is not None and "ch4_kg" in trace:
+                    group_ch4_samples[key].append(trace["ch4_kg"])
             if return_traces:
                 iteration_outputs.append(it.model_outputs)
         restore_parcels()
@@ -529,6 +548,19 @@ class LCAEngine:
         gas_stats = {
             g: _stats(v) for g, v in gas_samples.items() if len(v) > 0
         }
+        central_groups = (
+            central.model_outputs.get("enteric_ch4", {})
+            .get("trace", {})
+            .get("per_group", {})
+        )
+        group_stats = {
+            k: {
+                **_stats(v),
+                "central_kg": central_groups.get(k, {}).get("ch4_kg"),
+            }
+            for k, v in group_ch4_samples.items()
+            if len(v) > 0
+        }
         uncertainty = {
             "method": "Monte-Carlo",
             "n_iterations": n_iterations,
@@ -537,6 +569,8 @@ class LCAEngine:
             "impacts": stats,
             "gas_totals_kg": gas_stats,
         }
+        if group_stats:
+            uncertainty["enteric_ch4_per_group_kg"] = group_stats
         if record:
             self._record(central, summary, central_values, uncertainty=uncertainty)
         result = {

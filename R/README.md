@@ -1,0 +1,47 @@
+# R analysis scripts
+
+Post-processing and plotting of the JSON outputs of the PBLCA engine.
+
+## Scripts
+
+- `plot_enteric_ch4_groups.R` — reads `results.json`, finds the most
+  recent Monte-Carlo entry carrying `uncertainty$enteric_ch4_per_group_kg`
+  and plots, for each animal group (`lot`), a bar of the central value
+  (`central_kg`, unperturbed run) with p5–p95 whiskers from the
+  Monte-Carlo propagation. Output: `R/fig_ch4_par_lot.png`.
+
+## Dependencies
+
+```r
+install.packages(c("jsonlite", "ggplot2"))
+```
+
+## Usage
+
+From the repository root (after `run_case_study.py` has generated
+`results.json`):
+
+```bash
+Rscript R/plot_enteric_ch4_groups.R              # default: results.json
+Rscript R/plot_enteric_ch4_groups.R other.json   # custom path
+```
+
+## Data read
+
+`results.json` is a single JSON document
+(`{"format_version": ..., "simulations": [...]}`, one entry per
+simulation). The script keeps the most recent entry whose `uncertainty`
+section contains `enteric_ch4_per_group_kg`, i.e. a Monte-Carlo entry
+produced by `LCAEngine.run_monte_carlo()`. Each group
+provides:
+
+| Field        | Meaning                                             |
+|--------------|-----------------------------------------------------|
+| `central_kg` | Enteric CH4 (kg/year) of the group, central values   |
+| `mean`, `sd` | Monte-Carlo mean and standard deviation              |
+| `p5`, `p50`, `p95` | 5th, 50th and 95th percentiles of the distribution |
+| `n`          | Number of successful Monte-Carlo iterations          |
+
+Note: the per-group section reflects the `enteric_ch4` model variant
+selected for the Monte-Carlo run (see `model_selection` in the same
+JSON entry).
