@@ -623,6 +623,7 @@ SPECS = [
         tier="Tier-3",
         func=enteric_tier3_sauvant2011,
         reference=REF_T3_S11,
+        required_group_fields=["diet_om", "diet_omd"],
         description=(
             "INRA Tier-3 (Sauvant et al. 2011 eq. [9]): CH4 (g/kg DOMI) = "
             "45.42 − 6.66·NA + 0.75·NA² + 19.65·PCO − 35.0·PCO² − "
@@ -642,6 +643,7 @@ for _method, (_label, _ref) in CH4_MEASUREMENT_METHODS.items():
             tier="Measured",
             func=_make_enteric_measured(_method),
             reference=_ref,
+            required_group_fields=[f"ch4_measured_{_method}"],
             description=(
                 f"On-farm measurement ({_label}): user-provided g CH4/head/d "
                 f"directly used, uncertainty propagated via "

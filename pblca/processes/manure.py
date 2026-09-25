@@ -282,6 +282,7 @@ SPECS = [
         tier="Tier-3",
         func=manure_ch4_eugene2019,
         reference=REF_T3_EUG,
+        required_group_fields=["diet_om", "diet_omd"],
         description=(
             "INRA Tier-3 (Eugène et al. 2019): CH4 = VS × B0 × MCF with "
             "VS = DMI × diet_om × (1 − diet_omd) (non-digestible OM "

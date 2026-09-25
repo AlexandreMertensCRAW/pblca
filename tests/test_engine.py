@@ -40,6 +40,22 @@ def farm(engine):
     return build_case_study_farm(engine.params)
 
 
+@pytest.fixture()
+def farm_inra_tier3(engine):
+    """Case-study farm with the INRA diet characterisation (dMO, not
+    dE) set on every group — required by the tier3_sauvant2011 and
+    tier3_eugene2019 variants. DEMO values (feed tables INRA 2018)."""
+    farm = build_case_study_farm(engine.params)
+    diet = {
+        "veaux_0_6mois": (0.91, 0.72),
+        "jeunes_6_12mois": (0.91, 0.67),
+        "engraissés_12_21mois": (0.91, 0.64),
+    }
+    for a in farm.animals:
+        a.diet_om, a.diet_omd = diet[a.key]
+    return farm
+
+
 # ----------------------------------------------------------------------
 # Transversal layer: parameters
 # ----------------------------------------------------------------------
@@ -561,6 +577,8 @@ class TestProcesses:
         from pblca.registry import ModelContext
 
         farm = build_case_study_farm(engine.params)
+        for a in farm.animals:  # DEMO diet characterisation (INRA 2018)
+            a.diet_om, a.diet_omd = 0.91, 0.72
         ps = build_default_parameter_set()
         log = DiagLogger()
         ctx = ModelContext(farm, ps, ps.central_values(), log)
@@ -637,6 +655,8 @@ class TestProcesses:
         from pblca.processes.enteric import _energy_chain
 
         farm = build_case_study_farm(engine.params)
+        for a in farm.animals:  # DEMO diet characterisation (INRA 2018)
+            a.diet_om, a.diet_omd = 0.91, 0.72
         ps = build_default_parameter_set()
         log = DiagLogger()
         ctx = ModelContext(farm, ps, ps.central_values(), log)
@@ -695,7 +715,8 @@ class TestProcesses:
             manure_ch4_eugene2019(ctx)
         assert log.n_errors == 1
 
-    def test_tier3_inra_variants_registered_and_mc_reproducible(self, engine, farm):
+    def test_tier3_inra_variants_registered_and_mc_reproducible(self, engine, farm_inra_tier3):
+        farm = farm_inra_tier3
         # Both INRA Tier-3 variants are registered, run together, and
         # the Monte-Carlo is reproducible for a given seed.
         sel = {
@@ -968,10 +989,11 @@ class TestEngine:
         # The central run (unperturbed) is the reference of the entry.
         assert mc["central_impacts"]["gwp100"] > 0
 
-    def test_model_outputs_preserved(self, engine, farm):
+    def test_model_outputs_preserved(self, engine, farm_inra_tier3):
         """The intermediate computations of every model (per-group
         DMI, Ym, DOMI, VS per system, ...) are preserved on the
         SimulationResult and written to the JSON datastore."""
+        farm = farm_inra_tier3
         r = engine.run(
             farm,
             model_selection={"enteric_ch4": "tier3_sauvant2011"},
@@ -1092,3 +1114,137 @@ class TestEngine:
         for a in farm.animals:
             assert a.ch4_measured_ahcs == ahcs[a.key]
             assert a.ch4_measured_ahcs_rel_sd == 0.08
+
+
+class TestScenarioGrid:
+    """Declarative case-study configurations and the scenario grid."""
+
+    def test_grid_runs_all_variants_and_records(self, engine):
+        from pblca.scenarios import (
+            CaseStudyConfig,
+            GroupMeasurements,
+            run_scenario_grid,
+        )
+
+        config = CaseStudyConfig(
+            name="test_farm",
+            farm_builder=build_case_study_farm,
+            measurements=GroupMeasurements(
+                ch4_ahcs={
+                    "veaux_0_6mois": 90.0,
+                    "jeunes_6_12mois": 180.0,
+                    "engraiss\u00e9s_12_21mois": 260.0,
+                },
+                ch4_ahcs_rel_sd=0.08,
+                diet_om={
+                    "veaux_0_6mois": 0.91,
+                    "jeunes_6_12mois": 0.91,
+                    "engraiss\u00e9s_12_21mois": 0.91,
+                },
+                diet_omd={
+                    "veaux_0_6mois": 0.72,
+                    "jeunes_6_12mois": 0.67,
+                    "engraiss\u00e9s_12_21mois": 0.64,
+                },
+            ),
+            variant_grid={
+                "enteric_ch4": ["tier2_2006", "measured_ahcs"],
+            },
+            named_combinations={
+                "inra": {
+                    "enteric_ch4": "tier2_2006",
+                    "manure_ch4": "ipcc_tier2",
+                },
+            },
+        )
+        records = run_scenario_grid(engine, config, record=True)
+        assert len(records) == 3
+        assert all(not r.excluded for r in records)
+        ids = {r.sim_id for r in records}
+        assert "grid_test_farm_inra" in ids
+        assert "grid_test_farm_enteric_ch4=tier2_2006" in ids
+        # Each scenario recorded one JSON entry with its selection.
+        for r in records:
+            entry = [
+                e for e in engine.datastore._entries
+                if e["sim_id"] == r.sim_id
+            ][0]
+            assert entry["model_selection"]["enteric_ch4"]["variant"] == (
+                r.model_selection["enteric_ch4"]
+            )
+
+    def test_grid_excludes_variants_with_missing_measurements(self, engine):
+        # No measurement on the farm: measured_ahcs and the INRA
+        # Tier-3 variants are excluded with a reason, not a crash.
+        from pblca.scenarios import CaseStudyConfig, run_scenario_grid
+
+        config = CaseStudyConfig(
+            name="no_data_farm",
+            farm_builder=build_case_study_farm,
+            variant_grid={
+                "enteric_ch4": ["tier2_2006", "measured_ahcs",
+                                "tier3_sauvant2011"],
+            },
+        )
+        records = run_scenario_grid(engine, config, record=True)
+        by_variant = {
+            r.model_selection["enteric_ch4"]: r for r in records
+        }
+        ok = by_variant["tier2_2006"]
+        assert not ok.excluded
+        for variant in ("measured_ahcs", "tier3_sauvant2011"):
+            r = by_variant[variant]
+            assert r.excluded
+            assert "missing" in r.reason
+        # Excluded scenarios are NOT recorded in the datastore.
+        assert not any(
+            e["sim_id"].endswith(f"={v}")
+            for e in engine.datastore._entries
+            for v in ("measured_ahcs", "tier3_sauvant2011")
+        )
+
+    def test_run_case_study_orchestrates_grid_mc_and_comparison(self, tmp_path):
+        from pblca.engine import LCAEngine
+        from pblca.scenarios import (
+            CaseStudyConfig,
+            GroupMeasurements,
+            NumericalOptions,
+            run_case_study,
+        )
+
+        engine = LCAEngine(datastore_path=str(tmp_path / "results.json"))
+        config = CaseStudyConfig(
+            name="orch_farm",
+            farm_builder=build_case_study_farm,
+            measurements=GroupMeasurements(
+                ch4_ahcs={
+                    "veaux_0_6mois": 90.0, "jeunes_6_12mois": 180.0,
+                    "engraissés_12_21mois": 260.0,
+                },
+                ch4_ahcs_rel_sd=0.08,
+                dmi_measured={
+                    "veaux_0_6mois": 4.2, "jeunes_6_12mois": 7.4,
+                    "engraissés_12_21mois": 10.2,
+                },
+                ration_rel_sd=0.10,
+                diet_om={"veaux_0_6mois": 0.91},
+                diet_omd={"veaux_0_6mois": 0.72},
+            ),
+            variant_grid={"enteric_ch4": ["tier2_2006"]},
+            mc=NumericalOptions(n_iterations=10, seed=3),
+        )
+        summary = run_case_study(engine, config, record=True)
+        # Grid: one scenario, recorded.
+        assert len(summary["scenarios"]) == 1
+        assert not summary["scenarios"][0]["excluded"]
+        # Monte-Carlo per enteric variant of the grid, per-group CH4
+        # section present in the JSON entry.
+        assert "monte_carlo" in summary
+        mc_entry = [
+            e for e in engine.datastore._entries
+            if e["sim_id"] == "mc_orch_farm_enteric_tier2_2006"
+        ][0]
+        assert "enteric_ch4_per_group_kg" in mc_entry["uncertainty"]
+        # Paired ration comparison ran (measured rations available).
+        assert "ration_comparison" in summary
+        assert not isinstance(summary["ration_comparison"], str)

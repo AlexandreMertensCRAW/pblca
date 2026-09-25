@@ -312,6 +312,10 @@ class ModelSpec:
         func: callable implementing the universal interface.
         reference: bibliographic reference of the equation.
         description: description of the equation.
+        required_group_fields: AnimalGroup attribute names the
+            variant needs on every group (e.g. diet_omd); used by the
+            scenario grid to exclude variants whose required
+            measurements are not available on a given farm.
     """
 
     slot: str
@@ -320,6 +324,7 @@ class ModelSpec:
     func: ModelCallable
     reference: str
     description: str = ""
+    required_group_fields: List[str] = field(default_factory=list)
 
 
 class ModelRegistry:
