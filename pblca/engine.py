@@ -515,6 +515,10 @@ class LCAEngine:
             .get("per_group", {})
         )
         group_ch4_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
+        # Per-head-per-day enteric CH4 samples (g CH4/head/day, the
+        # AHCS measurement unit; derived by the enteric variants from
+        # the same trace, so the uncertainty is propagated identically).
+        group_ch4_day_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
         # Per-management-system manure CH4 samples (the manure
         # variants trace ch4_kg by storage/handling system: pasture,
         # solid storage, ...).
@@ -556,6 +560,8 @@ class LCAEngine:
                 )
                 if trace is not None and "ch4_kg" in trace:
                     group_ch4_samples[key].append(trace["ch4_kg"])
+                if trace is not None and trace.get("ch4_g_day") is not None:
+                    group_ch4_day_samples[key].append(trace["ch4_g_day"])
             for key in system_keys:
                 ch4_sys = (
                     it.model_outputs.get("manure_ch4", {})
@@ -587,6 +593,14 @@ class LCAEngine:
             for k, v in group_ch4_samples.items()
             if len(v) > 0
         }
+        group_g_day_stats = {
+            k: {
+                **_stats(v),
+                "central_g_day": central_groups.get(k, {}).get("ch4_g_day"),
+            }
+            for k, v in group_ch4_day_samples.items()
+            if len(v) > 0
+        }
         uncertainty = {
             "method": "Monte-Carlo",
             "n_iterations": n_iterations,
@@ -597,6 +611,8 @@ class LCAEngine:
         }
         if group_stats:
             uncertainty["enteric_ch4_per_group_kg"] = group_stats
+        if group_g_day_stats:
+            uncertainty["enteric_ch4_per_group_g_day"] = group_g_day_stats
         central_systems = (
             central.model_outputs.get("manure_ch4", {})
             .get("trace", {})

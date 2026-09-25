@@ -42,6 +42,36 @@ from typing import Dict
 from ..registry import ModelContext, ModelResult, ModelSpec
 
 REF_T2 = "IPCC 2006, Vol.4 Ch.10, Eq. 10.3/10.4/10.6/10.14/10.15/10.16/10.21 + Table 10.12"
+
+
+def _add_per_head_day(trace: Dict[str, dict], animals) -> None:
+    """Complete every per-group trace block with the daily per-animal
+    CH4 intensity, in place.
+
+    Every enteric variant reports the group CH4 as an annual mass
+    (``ch4_kg`` = per head x days x head count); the per-head-per-day
+    intensity (``ch4_g_day``, g CH4/head/day — the unit of the AHCS
+    measurements, comparable across groups regardless of head count
+    and time on farm) is derived once here so that all variants
+    expose the same field with the same definition.
+
+    Args:
+        trace: ``ModelResult.trace["per_group"]" mapping a group key
+            to its trace block (mutated in place).
+        animals: the animal groups of the farm, in the same order as
+            the trace was built; ``days`` and ``n_head`` are read from
+            the group.
+    """
+    for g in animals:
+        block = trace.get(g.key)
+        if block is None or "ch4_kg" not in block:
+            continue
+        block["days"] = g.days
+        if g.n_head and g.days:
+            block["ch4_g_day"] = block["ch4_kg"] / g.n_head / g.days * 1000.0
+        elif "ch4_g_day" not in block:
+            block["ch4_g_day"] = None
+            block["days"] = None
 REF_T2_2019 = (
     "IPCC 2019 Refinement, Vol.4 Ch.10, Eq. 10.3-10.16/10.21 "
     "+ Table 10.12 (Updated)"
@@ -126,6 +156,7 @@ def _make_enteric_measured(method: str):
                 "ch4_kg": ch4_kg_year,
                 "n_head": g.n_head,
             }
+        _add_per_head_day(res.trace["per_group"], ctx.farm.animals)
         res.ch4_kg = total
         res.trace["method"] = label
         res.trace["reference"] = reference
@@ -443,6 +474,7 @@ def _enteric_ge_ym(
             "n_head": g.n_head,
         }
         res.fluxes[f"ge_{g.key}"] = e["ge_mj_day"] * g.days * g.n_head
+    _add_per_head_day(res.trace["per_group"], ctx.farm.animals)
     res.ch4_kg = total
     return res
 
@@ -536,6 +568,7 @@ def enteric_tier3_mills(ctx: ModelContext, ingestion_mode: str = "auto") -> Mode
             "ch4_kg": group_ch4,
             "n_head": g.n_head,
         }
+    _add_per_head_day(res.trace["per_group"], ctx.farm.animals)
     res.ch4_kg = total
     return res
 
@@ -646,6 +679,7 @@ def enteric_tier3_sauvant2011(ctx: ModelContext, ingestion_mode: str = "auto") -
             "ch4_kg": ch4_kg_year,
             "n_head": g.n_head,
         }
+    _add_per_head_day(res.trace["per_group"], ctx.farm.animals)
     res.ch4_kg = total
     return res
 

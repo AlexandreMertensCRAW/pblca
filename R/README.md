@@ -38,6 +38,20 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   Rscript R/plot_manure_ch4_by_model.R results.json
   ```
 
+- `plot_enteric_ch4_per_head_day.R` — reads all the Monte-Carlo
+  entries carrying per-head-per-day CH4 statistics
+  (`uncertainty$enteric_ch4_per_group_g_day`, g CH4/head/day — the
+  AHCS/GreenFeed measurement unit) and plots the comparison of the
+  enteric model variants on that basis: one facet per animal group
+  (`scales = "free_y"`, the intensity differs strongly between age
+  classes), bars of the central values and p5–p95 whiskers per
+  variant. Directly comparable with the `measured_ahcs` variant.
+  Output: `R/fig_ch4_par_tete_jour.png`.
+
+  ```bash
+  Rscript R/plot_enteric_ch4_per_head_day.R results.json
+  ```
+
 ## Dependencies
 
 ```r

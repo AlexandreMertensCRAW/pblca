@@ -1081,6 +1081,58 @@ class TestEngine:
         # Section is JSON-serializable.
         json.dumps(groups)
 
+    def test_monte_carlo_per_group_g_day_stats(self, engine, farm):
+        """MC uncertainty also includes the per-head-per-day enteric
+        CH4 (g CH4/head/day, AHCS unit): central_g_day plus
+        {mean, sd, p5, p50, p95, n}, consistent with the annual mass
+        stats (central_g_day = central_kg / n_head / days * 1000)."""
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=15, seed=3, record=False,
+        )
+        g_day = mc["enteric_ch4_per_group_g_day"]
+        annual = mc["enteric_ch4_per_group_kg"]
+        assert set(g_day) == set(annual)
+        for key, stats in g_day.items():
+            assert stats["n"] == 15
+            for k in ("central_g_day", "mean", "sd", "p5", "p50", "p95"):
+                assert k in stats and stats[k] > 0
+            assert stats["p5"] <= stats["p50"] <= stats["p95"]
+        # Consistency: central intensity derived from the central
+        # annual mass and the group head count / days (read from the
+        # central run trace).
+        central = engine.run(farm, sim_id="central_gday_check", record=False)
+        trace = (
+            central.model_outputs["enteric_ch4"]["trace"]["per_group"]
+        )
+        for key, stats in g_day.items():
+            block = trace[key]
+            assert stats["central_g_day"] == pytest.approx(block["ch4_g_day"])
+            assert stats["central_g_day"] == pytest.approx(
+                annual[key]["central_kg"]
+                / block["n_head"] / block["days"] * 1000.0
+            )
+        # All enteric variants expose ch4_g_day in their per-group
+        # trace (single shared definition).
+        from pblca.registry import build_default_registry
+        from pblca.registry import ModelContext
+        for spec in build_default_registry().get_specs("enteric_ch4"):
+            required = spec.required_group_fields
+            if any(
+                getattr(g, attr, None) is None
+                for g in farm.animals for attr in required
+            ):
+                continue
+            ctx = ModelContext(
+                farm, engine.params, engine.params.central_values(),
+                DiagLogger(),
+            )
+            res = spec.func(ctx)
+            for block in res.trace["per_group"].values():
+                assert block["ch4_g_day"] is not None
+                assert block["days"] is not None
+        # Section is JSON-serializable.
+        json.dumps(g_day)
+
     def test_monte_carlo_per_group_stats_meas_ahcs(self, engine, farm):
         """Per-group CH4 stats also work with a measured variant:
         the AHCS relative uncertainty (ch4_measured_ahcs_rel_sd)
