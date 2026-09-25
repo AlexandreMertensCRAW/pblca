@@ -7,8 +7,9 @@ simulation — alternative-model testability requirement):
 
 * ``tier2_2006``: IPCC 2006 Vol.4 Ch.10, equations 10.3 (NEm), 10.4
   (NEa), 10.6 (NEg), 10.14 (REM), 10.15 (REG), 10.16 (GE) and 10.21
-  (EF). EF (kg CH4/head/yr) = GE × Ym / 55.65 with Ym interpolated
-  from 6.5 % (grass diet) to 3.0 % (>90 % concentrates), Table 10.12.
+  (EF). EF (kg CH4/head/yr) = GE × Ym / 55.65 with the two tabulated
+  Ym values of Table 10.12: 6.5 % default (roughage-based diets),
+  3.0 % for diets with more than 90 % concentrates.
 * ``tier2_2019``: same IPCC energy chain, Ym from the 2019
   Refinement Table 10.12 (Updated): 7.0 % (grazing systems), 6.3 %
   (mixed) interpolated towards 4.0 % (grain-based feedlot).
@@ -160,12 +161,29 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
     }
 
 
-def _ym_2006(v, g) -> float:
-    """Ym per IPCC 2006 Table 10.12, interpolated on the concentrate
-    share: 6.5 % (grass diet) towards 3.0 % (>90 % concentrates)."""
-    ym_high = v("ym_grass_diet")
-    ym_low = v("ym_feedlot")
-    return ym_high - (ym_high - ym_low) * min(max(g.share_concentrate, 0.0), 1.0)
+def _ym_2006(ctx: ModelContext, v, g) -> float:
+    """Ym per IPCC 2006 Table 10.12 — two tabulated values, no
+    interpolation prescribed by the source:
+
+    * 6.5 ± 1.0 %: default for all cattle/buffalo diets (the general
+      value, roughage-based diets);
+    * 3.0 ± 1.0 %: diets containing MORE THAN 90 % concentrates
+      (feedlot; footnote of Table 10.12).
+
+    A warning is logged when the concentrate share lies in the
+    intermediate zone (50–90 %): the source provides no value there
+    and the 6.5 % default is kept (a conservative choice).
+    """
+    if g.share_concentrate > 0.90:
+        return v("ym_feedlot")
+    if g.share_concentrate > 0.50:
+        ctx.logger.warn(
+            "enteric",
+            f"Concentrate share {g.share_concentrate:.2f} of group {g.key} "
+            f"is in the intermediate zone (50-90 %) not covered by "
+            f"IPCC 2006 Table 10.12 — the 6.5 % default Ym is applied",
+        )
+    return v("ym_grass_diet")
 
 
 def _ym_2019(ctx: ModelContext, v, g) -> float:
@@ -251,8 +269,9 @@ def _enteric_ge_ym(ctx: ModelContext, model_name: str, ym_func) -> ModelResult:
 def enteric_tier2_2006(ctx: ModelContext) -> ModelResult:
     """Enteric methane, IPCC 2006 Tier-2 (Eq. 10.21, Table 10.12).
 
-    EF = GE × Ym / 55.65, Ym interpolated from 6.5 % (grass diet) to
-    3.0 % (>90 % concentrates) on the concentrate share.
+    EF = GE × Ym / 55.65 with the two tabulated Ym values of Table
+    10.12 (no interpolation): 6.5 % default, 3.0 % for diets with
+    more than 90 % concentrates.
 
     Args:
         ctx: model context (farm, parameters, log).
@@ -347,7 +366,8 @@ SPECS = [
         reference=REF_T2,
         description=(
             "IPCC 2006: GE from net energy requirements; EF = GE×Ym/55.65, "
-            "Ym 6.5→3.0 % on the concentrate share (Table 10.12)."
+            "tabulated Ym — 6.5 % default, 3.0 % if >90 % concentrates "
+            "(Table 10.12)."
         ),
     ),
     ModelSpec(

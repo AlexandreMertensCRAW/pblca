@@ -309,33 +309,39 @@ class TestProcesses:
             12.0 * ps.central_values()["cp_feed"] / 6.25
         )
 
-    def test_tier2_2006_ym_interpolation(self):
-        # Ym must go from 6.5 % (grass) to 3.0 % (feedlot) linearly.
+    def test_tier2_2006_ym_tabulated(self):
+        # IPCC 2006 Table 10.12: two tabulated values, no interpolation.
+        # 6.5 % default; 3.0 % only above 90 % concentrates.
         from pblca.processes.enteric import _ym_2006
-        from pblca.registry import AnimalGroup
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
 
         ps = build_default_parameter_set()
-        v = ps.central_values()
+        log = DiagLogger()
 
-        class _V:
-            def __call__(self, pid):
-                return v[pid]
+        def make(share):
+            return AnimalGroup(
+                key=f"g{share}", n_head=1, bw_start=200, bw_end=350, days=182,
+                diet_de=0.65, diet_ge_density=18.45,
+                share_concentrate=share,
+            )
 
-        grass = AnimalGroup(
-            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
-            diet_de=0.65, diet_ge_density=18.45, share_concentrate=0.0,
+        groups = [make(0.0), make(0.35), make(0.70), make(1.0)]
+        farm = FarmContext(
+            farm_id="t", animals=groups, parcels=[], purchases={},
+            manure_split={},
         )
-        feedlot = AnimalGroup(
-            key="f", n_head=1, bw_start=200, bw_end=350, days=182,
-            diet_de=0.65, diet_ge_density=18.45, share_concentrate=1.0,
-        )
-        mid = AnimalGroup(
-            key="m", n_head=1, bw_start=200, bw_end=350, days=182,
-            diet_de=0.65, diet_ge_density=18.45, share_concentrate=0.5,
-        )
-        assert _ym_2006(_V(), grass) == pytest.approx(0.065)
-        assert _ym_2006(_V(), feedlot) == pytest.approx(0.030)
-        assert _ym_2006(_V(), mid) == pytest.approx(0.065 - (0.065 - 0.030) * 0.5)
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        v = ctx.v
+        yms = [_ym_2006(ctx, v, g) for g in groups]
+        assert yms[0] == pytest.approx(0.065)  # default, all shares <= 0.90
+        assert yms[1] == pytest.approx(0.065)
+        assert yms[2] == pytest.approx(0.065)
+        assert yms[3] == pytest.approx(0.030)  # > 90 % concentrates
+        # The intermediate zone (50-90 %) is not covered by the source:
+        # a WARNING must recommend the 6.5 % default.
+        warns = [m for m in log.as_list() if m["level"] == "WARNING"]
+        assert len(warns) == 1
+        assert "g0.7" in warns[0]["message"]
 
     def test_tier2_2019_ym_table(self):
         # Ym per the 2019 Refinement Table 10.12 (Updated).
