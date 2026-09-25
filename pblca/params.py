@@ -237,9 +237,7 @@ def build_default_parameter_set() -> ParameterSet:
     ps.add(
         "ym_grass_diet", 0.065, "fraction of GE",
         distribution="normal", sd=0.008,
-        reference=Reference(
-            "IPCC 2019 Refinement, Vol.4 Ch.10, Table 10.12 (diet >90 kg DM/1000 kg BW)"
-        ),
+        reference=Reference("IPCC 2006, Vol.4 Ch.10, Table 10.12"),
         description="Ym (enteric methane, Tier-2) grass/concentrate diet.",
     )
     ps.add(
@@ -247,6 +245,51 @@ def build_default_parameter_set() -> ParameterSet:
         distribution="normal", sd=0.003,
         reference=Reference("IPCC 2006, Vol.4 Ch.10, Table 10.12"),
         description="Ym for >90 % concentrate diets (finishing).",
+    )
+    ps.add(
+        "ym_2019_grazing", 0.070, "fraction of GE",
+        distribution="normal", sd=0.007,
+        reference=Reference(
+            "IPCC 2019 Refinement, Vol.4 Ch.10, Table 10.12 (Updated), "
+            "other cattle grazing systems"
+        ),
+        description="Ym (2019 Refinement) grazing/mixed low-concentrate diets.",
+    )
+    ps.add(
+        "ym_2019_mixed", 0.063, "fraction of GE",
+        distribution="normal", sd=0.006,
+        reference=Reference(
+            "IPCC 2019 Refinement, Vol.4 Ch.10, Table 10.12 (Updated), "
+            "other cattle mixed systems"
+        ),
+        description="Ym (2019 Refinement) mixed systems.",
+    )
+    ps.add(
+        "ym_2019_feedlot", 0.040, "fraction of GE",
+        distribution="normal", sd=0.005,
+        reference=Reference(
+            "IPCC 2019 Refinement, Vol.4 Ch.10, Table 10.12 (Updated), "
+            "other cattle feedlot (grain-based)"
+        ),
+        description="Ym (2019 Refinement) grain-based feedlot diets.",
+    )
+    ps.add(
+        "ym_fao_intercept", 9.75, "Ym in %",
+        distribution="normal", sd=0.5,
+        reference=Reference(
+            "FAO 2010, Greenhouse Gas Emissions from the Dairy Sector — "
+            "A Life Cycle Assessment (GLEAM): Ym(%) = 9.75 − 0.05 × DE%"
+        ),
+        description="FAO digestibility-dependent Ym: intercept (% points).",
+    )
+    ps.add(
+        "ym_fao_slope", 0.05, "Ym % points per DE % point",
+        distribution="normal", sd=0.004,
+        reference=Reference(
+            "FAO 2010, Greenhouse Gas Emissions from the Dairy Sector — "
+            "A Life Cycle Assessment (GLEAM): Ym(%) = 9.75 − 0.05 × DE%"
+        ),
+        description="FAO digestibility-dependent Ym: slope per digestibility point.",
     )
     # Tier-3: Mills et al. (2003) — exponential saturation equation
     # (via Ellis et al. 2009, equation W2): CH4 = 10.8 × (1 − e^(−0.141 × DMI))

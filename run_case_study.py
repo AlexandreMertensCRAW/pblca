@@ -33,7 +33,9 @@ def main() -> None:
     # 1. Central values — two variants of enteric methane
     # ------------------------------------------------------------------
     for variant, label in (
-        ("tier2", "IPCC Tier-2 (Eq. 10.21)"),
+        ("tier2_2006", "IPCC 2006 Tier-2 (Eq. 10.21, Table 10.12)"),
+        ("tier2_2019", "IPCC 2019 Refinement Tier-2 (Table 10.12 Updated)"),
+        ("tier2_fao_ym", "FAO dairy LCA: Ym = 9.75 − 0.05 × DE%"),
         ("tier3_mills", "Tier-3 Mills et al. 2003 (saturation)"),
     ):
         r = engine.run(

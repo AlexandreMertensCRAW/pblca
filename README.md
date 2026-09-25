@@ -46,7 +46,7 @@ engine = LCAEngine(datastore_path="results.json")
 farm = build_case_study_farm(engine.params)
 
 # Valeur centrale (variantes par défaut), avec sélection de modèles :
-result = engine.run(farm, model_selection={"enteric_ch4": "tier2"})
+result = engine.run(farm, model_selection={"enteric_ch4": "tier2_2006"})
 
 # Variante Tier-3 (Mills et al. 2003) pour tester l'équation alternative :
 result_t3 = engine.run(farm, model_selection={"enteric_ch4": "tier3_mills"})

@@ -85,7 +85,10 @@ class TestRegistry:
     def test_enteric_variants(self):
         reg = build_default_registry()
         variants = reg.variants("enteric_ch4")
-        assert "tier2" in variants and "tier3_mills" in variants
+        assert "tier2_2006" in variants
+        assert "tier2_2019" in variants
+        assert "tier2_fao_ym" in variants
+        assert "tier3_mills" in variants
 
     def test_universal_interface(self):
         reg = build_default_registry()
@@ -216,7 +219,7 @@ class TestProcesses:
     def test_measured_ration_bypasses_ipcc(self):
         # Mode "measured": DMI/GE encoded by hand must override the
         # IPCC estimate, for both enteric variants.
-        from pblca.processes.enteric import _energy_chain, enteric_tier2
+        from pblca.processes.enteric import _energy_chain, enteric_tier2_2006
         from pblca.registry import AnimalGroup
 
         ps = build_default_parameter_set()
@@ -241,9 +244,9 @@ class TestProcesses:
         assert e_meas["dmi_kg_day"] == pytest.approx(8.0)
         assert e_meas["ge_mj_day"] == pytest.approx(147.6)
         # CH4 must scale with the measured GE, not the IPCC GE.
-        ch4_base = enteric_tier2(ctx).ch4_kg
+        ch4_base = enteric_tier2_2006(ctx).ch4_kg
         ctx.farm.animals = [measured]
-        ch4_meas = enteric_tier2(ctx).ch4_kg
+        ch4_meas = enteric_tier2_2006(ctx).ch4_kg
         assert ch4_meas != pytest.approx(ch4_base)
 
     def test_measured_ration_inconsistency_warns(self):
@@ -306,6 +309,108 @@ class TestProcesses:
             12.0 * ps.central_values()["cp_feed"] / 6.25
         )
 
+    def test_tier2_2006_ym_interpolation(self):
+        # Ym must go from 6.5 % (grass) to 3.0 % (feedlot) linearly.
+        from pblca.processes.enteric import _ym_2006
+        from pblca.registry import AnimalGroup
+
+        ps = build_default_parameter_set()
+        v = ps.central_values()
+
+        class _V:
+            def __call__(self, pid):
+                return v[pid]
+
+        grass = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45, share_concentrate=0.0,
+        )
+        feedlot = AnimalGroup(
+            key="f", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45, share_concentrate=1.0,
+        )
+        mid = AnimalGroup(
+            key="m", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45, share_concentrate=0.5,
+        )
+        assert _ym_2006(_V(), grass) == pytest.approx(0.065)
+        assert _ym_2006(_V(), feedlot) == pytest.approx(0.030)
+        assert _ym_2006(_V(), mid) == pytest.approx(0.065 - (0.065 - 0.030) * 0.5)
+
+    def test_tier2_2019_ym_table(self):
+        # Ym per the 2019 Refinement Table 10.12 (Updated).
+        from pblca.processes.enteric import _ym_2019
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+
+        def make(share):
+            return AnimalGroup(
+                key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+                diet_de=0.65, diet_ge_density=18.45,
+                share_concentrate=share,
+            )
+
+        farm = FarmContext(
+            farm_id="t", animals=[make(0.0), make(0.5), make(1.0)],
+            parcels=[], purchases={}, manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        v = ctx.v
+        yms = [_ym_2019(ctx, v, g) for g in farm.animals]
+        assert yms[0] == pytest.approx(0.070)  # grazing
+        assert yms[1] == pytest.approx(0.063)  # mixed
+        assert yms[2] == pytest.approx(0.040)  # grain feedlot
+
+    def test_tier2_fao_ym_equation(self):
+        # Ym(%) = 9.75 - 0.05 × DE%: 6.5 % at DE=65, 6.0 % at DE=75.
+        from pblca.processes.enteric import _ym_fao
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+
+        def make(de):
+            return AnimalGroup(
+                key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+                diet_de=de, diet_ge_density=18.45,
+            )
+
+        farm = FarmContext(
+            farm_id="t", animals=[make(0.65), make(0.75)],
+            parcels=[], purchases={}, manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        v = ctx.v
+        yms = [_ym_fao(ctx, v, g) for g in farm.animals]
+        assert yms[0] == pytest.approx(0.065)
+        assert yms[1] == pytest.approx(0.060)
+
+    def test_fao_ym_domain_warning(self):
+        # With uncertain parameters drawn far from their central values
+        # (steep slope), the FAO Ym can leave the physical domain:
+        # a WARNING must be logged and the value bounded.
+        from pblca.processes.enteric import _ym_fao
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.90, diet_ge_density=18.45,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        values = dict(ps.central_values())
+        values["ym_fao_slope"] = 0.15  # extreme draw: 9.75 − 0.15×90 = −3.75 %
+        ctx = ModelContext(farm, ps, values, log)
+        ym = _ym_fao(ctx, ctx.v, animal)
+        assert ym == pytest.approx(0.015)
+        assert any(m["level"] == "WARNING" for m in log.as_list())
+
     def test_soil_n2o_proportional_to_inputs(self):
         from pblca.processes.soil import soil_n2o
         from pblca.registry import LandParcel
@@ -365,7 +470,7 @@ class TestEngine:
         assert by_farm["N2O"] == pytest.approx(by_farm_b["N2O"], rel=1e-12)
 
     def test_tier2_tier3_different(self, engine, farm):
-        r2 = engine.run(farm, model_selection={"enteric_ch4": "tier2"}, record=False)
+        r2 = engine.run(farm, model_selection={"enteric_ch4": "tier2_2006"}, record=False)
         r3 = engine.run(farm, model_selection={"enteric_ch4": "tier3_mills"}, record=False)
         # The two variants must differ (but stay of the same order).
         ch4_2, ch4_3 = r2.ledger.total("CH4"), r3.ledger.total("CH4")

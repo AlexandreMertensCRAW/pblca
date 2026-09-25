@@ -1,23 +1,29 @@
 """Layer 1 — Enteric methane: Tier-2 and Tier-3 variants.
 
-Two alternative equations registered for the ``enteric_ch4`` slot:
+Four alternative equations registered for the ``enteric_ch4`` slot,
+all following the universal interface
+``(ModelContext) -> ModelResult`` (interchangeable at every
+simulation — alternative-model testability requirement):
 
-* ``tier2``: IPCC 2006 Vol.4 Ch.10, equations 10.3 (NEm), 10.4 (NEa),
-  10.6 (NEg), 10.14 (REM), 10.15 (REG), 10.16 (GE) and 10.21 (EF).
-  EF (kg CH4/head/yr) = GE × Ym / 55.65.
-* ``tier3_mills``: exponential saturation equation (Mills et al. 2003,
-  via Ellis et al. 2009): CH4 (MJ/d) = a × (1 − e^(−k × DMI)),
+* ``tier2_2006``: IPCC 2006 Vol.4 Ch.10, equations 10.3 (NEm), 10.4
+  (NEa), 10.6 (NEg), 10.14 (REM), 10.15 (REG), 10.16 (GE) and 10.21
+  (EF). EF (kg CH4/head/yr) = GE × Ym / 55.65 with Ym interpolated
+  from 6.5 % (grass diet) to 3.0 % (>90 % concentrates), Table 10.12.
+* ``tier2_2019``: same IPCC energy chain, Ym from the 2019
+  Refinement Table 10.12 (Updated): 7.0 % (grazing systems), 6.3 %
+  (mixed) interpolated towards 4.0 % (grain-based feedlot).
+* ``tier2_fao_ym``: IPCC 2006 energy chain with a
+  digestibility-dependent Ym, as used in the FAO dairy-sector LCA
+  (GLEAM): Ym(%) = 9.75 − 0.05 × DE% (FAO 2010).
+* ``tier3_mills``: exponential saturation equation (Mills et al.
+  2003, via Ellis et al. 2009): CH4 (MJ/d) = a × (1 − e^(−k × DMI)),
   with a = 10.8 MJ/d and k = 0.141 (kg DM)^-1. DMI is estimated with
   the IPCC energy chain (GE / 18.45).
 
-Both variants follow the universal interface
-``(ModelContext) -> ModelResult`` and are therefore interchangeable at
-every simulation (alternative-model testability requirement).
-
 Ration definition: each ``AnimalGroup`` can either rely on the IPCC
-equations (default) or carry measured ``dmi_measured``/``ge_measured``
+energy chain (default) or carry measured ``dmi_measured``/``ge_measured``
 values encoded directly from farm data — see ``AnimalGroup`` and
-``_energy_chain``.
+``_energy_chain``. The chosen variant applies to both ration modes.
 """
 
 from __future__ import annotations
@@ -26,7 +32,16 @@ from typing import Dict
 
 from ..registry import ModelContext, ModelResult, ModelSpec
 
-REF_T2 = "IPCC 2006, Vol.4 Ch.10, Eq. 10.3/10.4/10.6/10.14/10.15/10.16/10.21"
+REF_T2 = "IPCC 2006, Vol.4 Ch.10, Eq. 10.3/10.4/10.6/10.14/10.15/10.16/10.21 + Table 10.12"
+REF_T2_2019 = (
+    "IPCC 2019 Refinement, Vol.4 Ch.10, Eq. 10.3-10.16/10.21 "
+    "+ Table 10.12 (Updated)"
+)
+REF_T2_FAO = (
+    "FAO 2010, Greenhouse Gas Emissions from the Dairy Sector — A Life "
+    "Cycle Assessment (GLEAM): Ym(%) = 9.75 − 0.05 × DE%; energy chain "
+    "IPCC 2006 Vol.4 Ch.10, Eq. 10.3-10.16"
+)
 REF_T3 = "Ellis et al. 2009 (exponential saturation, after Mills et al. 2003)"
 
 
@@ -145,29 +160,78 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
     }
 
 
-def enteric_tier2(ctx: ModelContext) -> ModelResult:
-    """Enteric methane with the IPCC Tier-2 method (Eq. 10.21).
+def _ym_2006(v, g) -> float:
+    """Ym per IPCC 2006 Table 10.12, interpolated on the concentrate
+    share: 6.5 % (grass diet) towards 3.0 % (>90 % concentrates)."""
+    ym_high = v("ym_grass_diet")
+    ym_low = v("ym_feedlot")
+    return ym_high - (ym_high - ym_low) * min(max(g.share_concentrate, 0.0), 1.0)
 
-    EF = GE × Ym / 55.65, Ym depending on the concentrate share of the
-    diet (0.065 for a grass-based diet, interpolated towards 0.03 for
-    finishing).
+
+def _ym_2019(ctx: ModelContext, v, g) -> float:
+    """Ym per IPCC 2019 Refinement Table 10.12 (Updated), other cattle.
+
+    7.0 % for grazing systems, 6.3 % for mixed systems, interpolated
+    towards 4.0 % for grain-based feedlot diets as the concentrate
+    share increases. A warning is logged when the interpolation leaves
+    the tabulated domain (pure grazing / pure feedlot).
+    """
+    ym_grazing = v("ym_2019_grazing")
+    ym_mixed = v("ym_2019_mixed")
+    ym_feedlot = v("ym_2019_feedlot")
+    sc = min(max(g.share_concentrate, 0.0), 1.0)
+    if sc <= 0.5:
+        # grazing -> mixed: assumed linear on the concentrate share.
+        ym = ym_grazing + (ym_mixed - ym_grazing) * (sc / 0.5)
+    else:
+        # mixed -> feedlot.
+        ym = ym_mixed + (ym_feedlot - ym_mixed) * ((sc - 0.5) / 0.5)
+    if sc > 0.9:
+        ctx.logger.warn(
+            "enteric",
+            f"Concentrate share {sc:.2f} outside the tabulated mixed/feedlot "
+            f"domain of Table 10.12 (2019) for group {g.key} — interpolated Ym",
+        )
+    return ym
+
+
+def _ym_fao(ctx: ModelContext, v, g) -> float:
+    """Digestibility-dependent Ym per the FAO dairy-sector LCA (GLEAM):
+
+    Ym(%) = 9.75 − 0.05 × DE% with DE% the diet digestibility in
+    percentage points. Bounded to [1.5 %, 12 %] (physical domain); a
+    warning is logged when the raw equation leaves that domain.
+    """
+    de_pct = g.diet_de * 100.0
+    ym_pct = v("ym_fao_intercept") - v("ym_fao_slope") * de_pct
+    if not 1.5 <= ym_pct <= 12.0:
+        ctx.logger.warn(
+            "enteric",
+            f"FAO Ym equation gives {ym_pct:.2f} % outside the physical "
+            f"domain [1.5, 12] for group {g.key} — bounded",
+        )
+        ym_pct = min(max(ym_pct, 1.5), 12.0)
+    return ym_pct / 100.0
+
+
+def _enteric_ge_ym(ctx: ModelContext, model_name: str, ym_func) -> ModelResult:
+    """Shared implementation of the GE × Ym variants (Eq. 10.21).
 
     Args:
         ctx: model context (farm, parameters, log).
+        model_name: variant name (traceability).
+        ym_func: (v, group) -> Ym fraction, specific to the variant.
 
     Returns:
         ModelResult with the total ch4_kg and a trace per age class.
     """
     v = ctx.v
-    res = ModelResult(model_name="tier2")
+    res = ModelResult(model_name=model_name)
     res.trace["per_group"] = {}
     total = 0.0
     for g in ctx.farm.animals:
         e = _energy_chain(ctx, g)
-        # Interpolated Ym: 6.5 % (grass) -> 3 % (finishing >90 % concentrates)
-        ym_high = v("ym_grass_diet")
-        ym_low = v("ym_feedlot")
-        ym = ym_high - (ym_high - ym_low) * min(g.share_concentrate, 1.0)
+        ym = ym_func(ctx, v, g) if ym_func.__code__.co_argcount == 3 else ym_func(v, g)
         # Eq. 10.21: EF kg CH4/head/yr = (GE×Ym/55.65) × days
         ef_kg = e["ge_mj_day"] * ym / v("energy_ch4_mj_per_kg") * g.days
         group_ch4 = ef_kg * g.n_head
@@ -182,6 +246,53 @@ def enteric_tier2(ctx: ModelContext) -> ModelResult:
         res.fluxes[f"ge_{g.key}"] = e["ge_mj_day"] * g.days * g.n_head
     res.ch4_kg = total
     return res
+
+
+def enteric_tier2_2006(ctx: ModelContext) -> ModelResult:
+    """Enteric methane, IPCC 2006 Tier-2 (Eq. 10.21, Table 10.12).
+
+    EF = GE × Ym / 55.65, Ym interpolated from 6.5 % (grass diet) to
+    3.0 % (>90 % concentrates) on the concentrate share.
+
+    Args:
+        ctx: model context (farm, parameters, log).
+
+    Returns:
+        ModelResult with the total ch4_kg and a trace per age class.
+    """
+    return _enteric_ge_ym(ctx, "tier2_2006", _ym_2006)
+
+
+def enteric_tier2_2019(ctx: ModelContext) -> ModelResult:
+    """Enteric methane, IPCC 2019 Refinement Tier-2.
+
+    Same IPCC energy chain as 2006 (Eq. 10.3-10.16 unchanged by the
+    refinement for growing cattle), but Ym follows the 2019 Table
+    10.12 (Updated): grazing 7.0 %, mixed 6.3 %, grain feedlot 4.0 %.
+
+    Args:
+        ctx: model context (farm, parameters, log).
+
+    Returns:
+        ModelResult with the total ch4_kg and a trace per age class.
+    """
+    return _enteric_ge_ym(ctx, "tier2_2019", _ym_2019)
+
+
+def enteric_tier2_fao_ym(ctx: ModelContext) -> ModelResult:
+    """Enteric methane, IPCC 2006 chain with FAO digestibility-dependent Ym.
+
+    Ym(%) = 9.75 − 0.05 × DE% (FAO 2010 dairy-sector LCA, GLEAM),
+    so that the methane conversion factor responds directly to the
+    ration digestibility instead of a fixed tabulated default.
+
+    Args:
+        ctx: model context (farm, parameters, log).
+
+    Returns:
+        ModelResult with the total ch4_kg and a trace per age class.
+    """
+    return _enteric_ge_ym(ctx, "tier2_fao_ym", _ym_fao)
 
 
 def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
@@ -230,11 +341,36 @@ def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
 SPECS = [
     ModelSpec(
         slot="enteric_ch4",
-        variant="tier2",
+        variant="tier2_2006",
         tier="Tier-2",
-        func=enteric_tier2,
+        func=enteric_tier2_2006,
         reference=REF_T2,
-        description="GE from net energy requirements; EF = GE×Ym/55.65.",
+        description=(
+            "IPCC 2006: GE from net energy requirements; EF = GE×Ym/55.65, "
+            "Ym 6.5→3.0 % on the concentrate share (Table 10.12)."
+        ),
+    ),
+    ModelSpec(
+        slot="enteric_ch4",
+        variant="tier2_2019",
+        tier="Tier-2",
+        func=enteric_tier2_2019,
+        reference=REF_T2_2019,
+        description=(
+            "IPCC 2019 Refinement: same energy chain, Ym from Table 10.12 "
+            "(Updated): grazing 7.0 %, mixed 6.3 %, grain feedlot 4.0 %."
+        ),
+    ),
+    ModelSpec(
+        slot="enteric_ch4",
+        variant="tier2_fao_ym",
+        tier="Tier-2",
+        func=enteric_tier2_fao_ym,
+        reference=REF_T2_FAO,
+        description=(
+            "FAO dairy LCA (GLEAM): Ym(%) = 9.75 − 0.05 × DE%, applied on "
+            "the IPCC 2006 energy chain."
+        ),
     ),
     ModelSpec(
         slot="enteric_ch4",
