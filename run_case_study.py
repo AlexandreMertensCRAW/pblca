@@ -150,6 +150,54 @@ def main() -> None:
     print(f"  Failed iterations: {mc['failed_iterations']}")
 
     # ------------------------------------------------------------------
+    # 2bis. Monte-Carlo per enteric model (per-group CH4 statistics)
+    # ------------------------------------------------------------------
+    # One Monte-Carlo per enteric_ch4 variant, each recorded as its own
+    # JSON entry; the uncertainty section carries the per-animal-group
+    # CH4 statistics used by R/plot_enteric_ch4_by_model.R.
+    print("\n--- Monte-Carlo: all enteric variants (per-group CH4) ---")
+    print(
+        f"  {'variant':22s} {'total CH4 mean':>15s} {'sd':>8s} "
+        f"{'failed':>7s}"
+    )
+    for spec in engine.registry.get_specs("enteric_ch4"):
+        ahcs_values = {  # DEMO
+            "veaux_0_6mois": 90.0,
+            "jeunes_6_12mois": 180.0,
+            "engraissés_12_21mois": 260.0,
+        }
+        saved = {}
+        if spec.variant == "measured_ahcs":
+            for a in farm.animals:
+                saved[a.key] = (
+                    a.ch4_measured_ahcs, a.ch4_measured_ahcs_rel_sd
+                )
+                a.ch4_measured_ahcs = ahcs_values[a.key]
+                a.ch4_measured_ahcs_rel_sd = 0.08  # DEMO
+        mc_v = engine.run_monte_carlo(
+            farm,
+            n_iterations=500,
+            seed=2024,
+            model_selection={"enteric_ch4": spec.variant},
+            sim_id=f"mc_enteric_{spec.variant}",
+        )
+        groups = mc_v.get("enteric_ch4_per_group_kg", {})
+        total_mean = sum(v["mean"] for v in groups.values()) if groups else float("nan")
+        total_sd = (
+            sum(v["sd"] for v in groups.values()) if groups else float("nan")
+        )
+        print(
+            f"  {spec.variant:22s} {total_mean:15.1f} {total_sd:8.1f} "
+            f"{mc_v['failed_iterations']:7d}"
+        )
+        if spec.variant == "measured_ahcs":
+            for a in farm.animals:
+                (
+                    a.ch4_measured_ahcs,
+                    a.ch4_measured_ahcs_rel_sd,
+                ) = saved[a.key]
+
+    # ------------------------------------------------------------------
     # 3. Paired comparison: IPCC equations vs measured rations
     # ------------------------------------------------------------------
     # Illustrative on-farm measured intakes (kg DM/head/d per class),

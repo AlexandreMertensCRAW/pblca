@@ -436,6 +436,7 @@ class LCAEngine:
         seed: Optional[int] = None,
         record: bool = True,
         return_traces: bool = False,
+        sim_id: str = "central",
     ) -> Dict[str, Any]:
         """Uncertainty propagation by Monte-Carlo.
 
@@ -450,6 +451,9 @@ class LCAEngine:
             model_selection: variants per slot.
             seed: random seed (reproducibility).
             record: if True, records a summary entry in the datastore.
+            sim_id: identifier of the central run written to the
+                datastore (use distinct ids when running several
+                Monte-Carlos, e.g. one per model variant).
             return_traces: if True, the per-iteration model outputs
                 (traces/fluxes of every slot) are returned under the
                 "iteration_outputs" key for post-hoc analysis (e.g.
@@ -481,7 +485,9 @@ class LCAEngine:
 
         ration_state = _ration_snapshot(farms)
         has_measures = any(
-            dmi is not None or ge is not None for _, dmi, ge, _, _ in ration_state
+            (dmi is not None or ge is not None)
+            or any(v is not None and sd for _, v, sd in ch4_measures)
+            for _, dmi, ge, _, ch4_measures in ration_state
         )
 
         # Central simulation (reference). It is recorded through the
@@ -491,7 +497,7 @@ class LCAEngine:
             farms,
             model_selection=model_selection,
             values=central_values,
-            sim_id="central",
+            sim_id=sim_id,
             record=False,
         )
         summary = self.registry.selection_summary(central.model_selection)

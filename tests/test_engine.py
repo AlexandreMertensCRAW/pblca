@@ -1058,3 +1058,37 @@ class TestEngine:
         assert entry["uncertainty"]["enteric_ch4_per_group_kg"] == groups
         # Section is JSON-serializable.
         json.dumps(groups)
+
+    def test_monte_carlo_per_group_stats_meas_ahcs(self, engine, farm):
+        """Per-group CH4 stats also work with a measured variant:
+        the AHCS relative uncertainty (ch4_measured_ahcs_rel_sd)
+        propagates through the Monte-Carlo even when no measured
+        ration (dmi/ge) is set on the groups."""
+        ahcs = {  # DEMO
+            "veaux_0_6mois": 90.0,
+            "jeunes_6_12mois": 180.0,
+            "engraissés_12_21mois": 260.0,
+        }
+        by_key = {a.key: a for a in farm.animals}
+        for a in farm.animals:
+            a.ch4_measured_ahcs = ahcs[a.key]
+            a.ch4_measured_ahcs_rel_sd = 0.08
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=30, seed=7,
+            model_selection={"enteric_ch4": "measured_ahcs"},
+            record=False,
+        )
+        groups = mc["enteric_ch4_per_group_kg"]
+        assert set(groups) == set(ahcs)
+        # Central values: value/1000 * days * n_head.
+        for k, stats in groups.items():
+            g = by_key[k]
+            assert stats["central_kg"] == pytest.approx(
+                ahcs[k] / 1000.0 * g.days * g.n_head
+            )
+            # 8 % lognormal factor on the measurement -> sd > 0.
+            assert stats["sd"] > 0
+        # Idempotence: measured values restored by the MC.
+        for a in farm.animals:
+            assert a.ch4_measured_ahcs == ahcs[a.key]
+            assert a.ch4_measured_ahcs_rel_sd == 0.08
