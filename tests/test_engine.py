@@ -967,3 +967,52 @@ class TestEngine:
         )
         # The central run (unperturbed) is the reference of the entry.
         assert mc["central_impacts"]["gwp100"] > 0
+
+    def test_model_outputs_preserved(self, engine, farm):
+        """The intermediate computations of every model (per-group
+        DMI, Ym, DOMI, VS per system, ...) are preserved on the
+        SimulationResult and written to the JSON datastore."""
+        r = engine.run(
+            farm,
+            model_selection={"enteric_ch4": "tier3_sauvant2011"},
+            sim_id="with_outputs",
+            record=True,
+        )
+        out = r.model_outputs["enteric_ch4"]
+        assert out["variant"] == "tier3_sauvant2011"
+        g0 = farm.animals[0]
+        tg = out["trace"]["per_group"][g0.key]
+        assert tg["dmi_kg_day"] > 0
+        assert "ch4_g_kg_modi" in tg
+        # Every slot is present.
+        for slot in (
+            "enteric_ch4", "manure_ch4", "manure_n2o",
+            "soil_n2o", "soil_carbon", "purchases", "fieldwork",
+        ):
+            assert slot in r.model_outputs
+        # JSON entry carries the model_outputs.
+        entry = [
+            e for e in engine.datastore._entries
+            if e["sim_id"] == "with_outputs"
+        ][0]
+        assert "model_outputs" in entry
+        assert (
+            entry["model_outputs"]["enteric_ch4"]["trace"]["per_group"][
+                g0.key
+            ]["ch4_kg"]
+            == pytest.approx(tg["ch4_kg"])
+        )
+
+    def test_monte_carlo_return_traces(self, engine, farm):
+        """return_traces=True gives the per-iteration model outputs
+        for post-hoc analysis; nothing extra is written to JSON."""
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=8, seed=5, record=False, return_traces=True,
+        )
+        assert len(mc["iteration_outputs"]) == 8
+        it0 = mc["iteration_outputs"][0]["enteric_ch4"]
+        assert "trace" in it0 and "variant" in it0
+        mc2 = engine.run_monte_carlo(
+            farm, n_iterations=8, seed=5, record=False,
+        )
+        assert "iteration_outputs" not in mc2

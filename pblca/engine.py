@@ -22,7 +22,7 @@ import json
 import os
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
@@ -66,6 +66,13 @@ class SimulationResult:
         diagnostics: warnings and errors encountered.
         model_selection: variants used (per slot).
         farms: identifiers of the simulated farms.
+        model_outputs: per-slot intermediate model outputs
+            {slot: {"variant": ..., "trace": ..., "fluxes": ...}} —
+            the detailed computations of each model (per-group DMI,
+            Ym, DOMI, VS per system, ...) are preserved here instead
+            of being discarded after the total is ledgered (ISO
+            14044 §4.5, documentation of the data). With several
+            farms, the last farm's outputs are kept per slot.
     """
 
     sim_id: str
@@ -74,6 +81,7 @@ class SimulationResult:
     diagnostics: List[Dict[str, Any]]
     model_selection: Dict[str, str]
     farms: List[str]
+    model_outputs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 class DataStore:
@@ -89,6 +97,7 @@ class DataStore:
             {
               "sim_id": "...", "timestamp": "...", "farms": [...],
               "model_selection": {...},
+              "model_outputs": {...},
               "inventory": {...},
               "impacts_kg_co2e": {...},
               "uncertainty": {...},
@@ -312,6 +321,7 @@ class LCAEngine:
         ledger = GasLedger()
         diagnostics = DiagLogger()
         farm_ids: List[str] = []
+        model_outputs: Dict[str, Dict[str, Any]] = {}
 
         # Save parcel state: run() must be idempotent (manure
         # redistribution mutates n_organic_spread in place).
@@ -327,6 +337,11 @@ class LCAEngine:
                 for slot in _PRE_MANURE_SLOTS:
                     spec = self.registry.get(slot, model_selection[slot])
                     result = spec.func(ctx)
+                    model_outputs[slot] = {
+                        "variant": spec.variant,
+                        "trace": result.trace,
+                        "fluxes": result.fluxes,
+                    }
                     source, gas = SLOT_SOURCE_GAS[slot]
                     amount = getattr(result, f"{gas.lower()}_kg")
                     ledger.add(
@@ -345,6 +360,11 @@ class LCAEngine:
                 for slot in _POST_MANURE_SLOTS:
                     spec = self.registry.get(slot, model_selection[slot])
                     result = spec.func(ctx)
+                    model_outputs[slot] = {
+                        "variant": spec.variant,
+                        "trace": result.trace,
+                        "fluxes": result.fluxes,
+                    }
                     source, gas = SLOT_SOURCE_GAS[slot]
                     amount = result.co2_kg if gas == "CO2" else result.n2o_kg
                     if slot == "soil_carbon" and amount < 0:
@@ -377,6 +397,7 @@ class LCAEngine:
             diagnostics=diagnostics.as_list(),
             model_selection=model_selection,
             farms=farm_ids,
+            model_outputs=model_outputs,
         )
         if record:
             self._record(sim, summary, values, uncertainty=None)
@@ -395,6 +416,7 @@ class LCAEngine:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "farms": sim.farms,
             "model_selection": model_summary,
+            "model_outputs": sim.model_outputs,
             "inventory": sim.ledger.as_dict(),
             "impacts_kg_co2e": sim.impacts,
             "diagnostics": sim.diagnostics,
@@ -413,6 +435,7 @@ class LCAEngine:
         model_selection: Optional[Dict[str, str]] = None,
         seed: Optional[int] = None,
         record: bool = True,
+        return_traces: bool = False,
     ) -> Dict[str, Any]:
         """Uncertainty propagation by Monte-Carlo.
 
@@ -427,6 +450,12 @@ class LCAEngine:
             model_selection: variants per slot.
             seed: random seed (reproducibility).
             record: if True, records a summary entry in the datastore.
+            return_traces: if True, the per-iteration model outputs
+                (traces/fluxes of every slot) are returned under the
+                "iteration_outputs" key for post-hoc analysis (e.g.
+                correlation between DMI and CH4); they are NOT
+                written to the JSON datastore (memory: one entry per
+                iteration — use with moderate n_iterations).
 
         Returns:
             statistics per indicator {mean, sd, p5, p50, p95, n} and
@@ -471,6 +500,7 @@ class LCAEngine:
         impact_samples: Dict[str, List[float]] = {k: [] for k in central.impacts}
         gas_samples: Dict[str, List[float]] = {g: [] for g in GASES}
         failed = 0
+        iteration_outputs: List[Dict[str, Any]] = []
         for _ in range(n_iterations):
             drawn = self.params.draw(rng)
             restore_parcels()
@@ -490,6 +520,8 @@ class LCAEngine:
                 impact_samples[k].append(v)
             for g in GASES:
                 gas_samples[g].append(it.ledger.total(g))
+            if return_traces:
+                iteration_outputs.append(it.model_outputs)
         restore_parcels()
         _set_ration_mode(ration_state, "measured")
 
@@ -507,12 +539,15 @@ class LCAEngine:
         }
         if record:
             self._record(central, summary, central_values, uncertainty=uncertainty)
-        return {
+        result = {
             "sim_id": "monte_carlo",
             "model_selection": summary,
             "central_impacts": central.impacts,
             **uncertainty,
         }
+        if return_traces:
+            result["iteration_outputs"] = iteration_outputs
+        return result
 
     # ------------------------------------------------------------------
     # Paired Monte-Carlo: IPCC equations vs measured rations
