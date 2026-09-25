@@ -343,31 +343,74 @@ class TestProcesses:
         assert len(warns) == 1
         assert "g0.7" in warns[0]["message"]
 
-    def test_tier2_2019_ym_table(self):
-        # Ym per the 2019 Refinement Table 10.12 (Updated).
+    def test_tier2_2019_ym_tabulated(self):
+        # Tabulated Ym per the 2019 Refinement Table 10.12 (Updated),
+        # selected by AnimalGroup.system (no interpolation).
         from pblca.processes.enteric import _ym_2019
         from pblca.registry import AnimalGroup, FarmContext, ModelContext
 
         ps = build_default_parameter_set()
         log = DiagLogger()
 
-        def make(share):
+        def make(system, share=0.0):
             return AnimalGroup(
-                key="g", n_head=1, bw_start=200, bw_end=350, days=182,
-                diet_de=0.65, diet_ge_density=18.45,
-                share_concentrate=share,
+                key=f"g{system}", n_head=1, bw_start=200, bw_end=350,
+                days=182, diet_de=0.65, diet_ge_density=18.45,
+                share_concentrate=share, system=system,
             )
 
+        groups = [make("grazing"), make("mixed"), make("feedlot")]
         farm = FarmContext(
-            farm_id="t", animals=[make(0.0), make(0.5), make(1.0)],
-            parcels=[], purchases={}, manure_split={},
+            farm_id="t", animals=groups, parcels=[], purchases={},
+            manure_split={},
         )
         ctx = ModelContext(farm, ps, ps.central_values(), log)
         v = ctx.v
-        yms = [_ym_2019(ctx, v, g) for g in farm.animals]
-        assert yms[0] == pytest.approx(0.070)  # grazing
-        assert yms[1] == pytest.approx(0.063)  # mixed
-        assert yms[2] == pytest.approx(0.040)  # grain feedlot
+        yms = [_ym_2019(ctx, v, g) for g in groups]
+        assert yms[0] == pytest.approx(0.070)
+        assert yms[1] == pytest.approx(0.063)
+        assert yms[2] == pytest.approx(0.040)
+        assert log.n_errors == 0
+
+    def test_tier2_2019_system_inferred_warns(self):
+        # system=None: inferred from the concentrate share + WARNING.
+        from pblca.processes.enteric import _ym_2019
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45, share_concentrate=0.35,
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        ym = _ym_2019(ctx, ctx.v, animal)
+        assert ym == pytest.approx(0.063)  # mixed inferred
+        assert any(m["level"] == "WARNING" for m in log.as_list())
+
+    def test_tier2_2019_unknown_system_error(self):
+        # Unknown system: ERROR logged, mixed-system Ym applied.
+        from pblca.processes.enteric import _ym_2019
+        from pblca.registry import AnimalGroup, FarmContext, ModelContext
+
+        ps = build_default_parameter_set()
+        log = DiagLogger()
+        animal = AnimalGroup(
+            key="g", n_head=1, bw_start=200, bw_end=350, days=182,
+            diet_de=0.65, diet_ge_density=18.45, system="unknown_system",
+        )
+        farm = FarmContext(
+            farm_id="t", animals=[animal], parcels=[], purchases={},
+            manure_split={},
+        )
+        ctx = ModelContext(farm, ps, ps.central_values(), log)
+        ym = _ym_2019(ctx, ctx.v, animal)
+        assert ym == pytest.approx(0.063)
+        assert log.n_errors == 1
 
     def test_tier2_fao_ym_equation(self):
         # Ym(%) = 9.75 - 0.05 × DE%: 6.5 % at DE=65, 6.0 % at DE=75.

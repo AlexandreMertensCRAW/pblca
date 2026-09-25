@@ -57,6 +57,13 @@ class AnimalGroup:
         ge_measured: on-farm measured gross energy intake (MJ/head/d).
             When set (positive), it bypasses the IPCC energy-chain
             estimate for GE.
+        system: feeding situation per IPCC 2019 Refinement Vol.4
+            Ch.10 (Table 10.5): "grazing" (>90 % of DM from grazing),
+            "mixed" (grazing + conserved forages/concentrates) or
+            "feedlot" (confined, high-concentrate). Used by the
+            ``tier2_2019`` variant to pick the tabulated Ym of Table
+            10.12 (Updated) without interpolation. None = inferred
+            from the concentrate share (see ``_ym_2019``).
         ration_rel_sd: relative standard deviation of the measured-
             ration quantification error (e.g. 0.05 for ±5 %). During
             Monte-Carlo, one multiplicative lognormal factor per group
@@ -95,6 +102,7 @@ class AnimalGroup:
     dmi_measured: Optional[float] = None
     ge_measured: Optional[float] = None
     ration_rel_sd: Optional[float] = None
+    system: Optional[str] = None
 
     @property
     def ration_mode(self) -> str:

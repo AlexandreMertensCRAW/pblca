@@ -11,8 +11,9 @@ simulation — alternative-model testability requirement):
   Ym values of Table 10.12: 6.5 % default (roughage-based diets),
   3.0 % for diets with more than 90 % concentrates.
 * ``tier2_2019``: same IPCC energy chain, Ym from the 2019
-  Refinement Table 10.12 (Updated): 7.0 % (grazing systems), 6.3 %
-  (mixed) interpolated towards 4.0 % (grain-based feedlot).
+  Refinement Table 10.12 (Updated), tabulated per feeding situation
+  (``AnimalGroup.system``): 7.0 % grazing, 6.3 % mixed, 4.0 %
+  grain-based feedlot — no interpolation.
 * ``tier2_fao_ym``: IPCC 2006 energy chain with a
   digestibility-dependent Ym, as used in the FAO dairy-sector LCA
   (GLEAM): Ym(%) = 9.75 − 0.05 × DE% (FAO 2010).
@@ -187,30 +188,46 @@ def _ym_2006(ctx: ModelContext, v, g) -> float:
 
 
 def _ym_2019(ctx: ModelContext, v, g) -> float:
-    """Ym per IPCC 2019 Refinement Table 10.12 (Updated), other cattle.
+    """Ym per IPCC 2019 Refinement Table 10.12 (Updated), other cattle —
+    tabulated values selected by the feeding situation, no
+    interpolation:
 
-    7.0 % for grazing systems, 6.3 % for mixed systems, interpolated
-    towards 4.0 % for grain-based feedlot diets as the concentrate
-    share increases. A warning is logged when the interpolation leaves
-    the tabulated domain (pure grazing / pure feedlot).
+    * ``grazing``  : 7.0 % (grazing systems);
+    * ``mixed``    : 6.3 % (mixed systems);
+    * ``feedlot``  : 4.0 % (grain-based feedlot diets).
+
+    The system is read from ``AnimalGroup.system`` (explicit input).
+    When it is None, it is inferred from the concentrate share and a
+    warning documents the inference: >90 % concentrates → feedlot,
+    <10 % → grazing, otherwise mixed.
     """
-    ym_grazing = v("ym_2019_grazing")
-    ym_mixed = v("ym_2019_mixed")
-    ym_feedlot = v("ym_2019_feedlot")
-    sc = min(max(g.share_concentrate, 0.0), 1.0)
-    if sc <= 0.5:
-        # grazing -> mixed: assumed linear on the concentrate share.
-        ym = ym_grazing + (ym_mixed - ym_grazing) * (sc / 0.5)
-    else:
-        # mixed -> feedlot.
-        ym = ym_mixed + (ym_feedlot - ym_mixed) * ((sc - 0.5) / 0.5)
-    if sc > 0.9:
+    system = g.system
+    if system is None:
+        if g.share_concentrate > 0.90:
+            system = "feedlot"
+        elif g.share_concentrate < 0.10:
+            system = "grazing"
+        else:
+            system = "mixed"
         ctx.logger.warn(
             "enteric",
-            f"Concentrate share {sc:.2f} outside the tabulated mixed/feedlot "
-            f"domain of Table 10.12 (2019) for group {g.key} — interpolated Ym",
+            f"AnimalGroup.system not set for group {g.key}: "
+            f"inferred '{system}' from the concentrate share "
+            f"({g.share_concentrate:.2f}) — set it explicitly for a "
+            f"traceable Table 10.12 (2019) selection",
         )
-    return ym
+    if system not in ("grazing", "mixed", "feedlot"):
+        ctx.logger.error(
+            "enteric",
+            f"Unknown feeding situation '{system}' for group {g.key} "
+            f"(expected grazing/mixed/feedlot) — mixed-system Ym applied",
+        )
+        system = "mixed"
+    return {
+        "grazing": v("ym_2019_grazing"),
+        "mixed": v("ym_2019_mixed"),
+        "feedlot": v("ym_2019_feedlot"),
+    }[system]
 
 
 def _ym_fao(ctx: ModelContext, v, g) -> float:
@@ -286,8 +303,10 @@ def enteric_tier2_2019(ctx: ModelContext) -> ModelResult:
     """Enteric methane, IPCC 2019 Refinement Tier-2.
 
     Same IPCC energy chain as 2006 (Eq. 10.3-10.16 unchanged by the
-    refinement for growing cattle), but Ym follows the 2019 Table
-    10.12 (Updated): grazing 7.0 %, mixed 6.3 %, grain feedlot 4.0 %.
+    refinement for growing cattle), but Ym follows the tabulated
+    values of the 2019 Table 10.12 (Updated), selected by the feeding
+    situation (``AnimalGroup.system``): grazing 7.0 %, mixed 6.3 %,
+    grain feedlot 4.0 % — no interpolation.
 
     Args:
         ctx: model context (farm, parameters, log).
@@ -377,8 +396,9 @@ SPECS = [
         func=enteric_tier2_2019,
         reference=REF_T2_2019,
         description=(
-            "IPCC 2019 Refinement: same energy chain, Ym from Table 10.12 "
-            "(Updated): grazing 7.0 %, mixed 6.3 %, grain feedlot 4.0 %."
+            "IPCC 2019 Refinement: same energy chain, tabulated Ym from "
+            "Table 10.12 (Updated) selected by feeding situation: grazing "
+            "7.0 %, mixed 6.3 %, grain feedlot 4.0 %."
         ),
     ),
     ModelSpec(

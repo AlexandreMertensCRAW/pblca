@@ -59,6 +59,7 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             diet_de=0.70, diet_ge_density=18.45,
             share_concentrate=0.10,  # milk + starter concentrate
             grazing=0.5,
+            system="mixed",  # barn + pasture, IPCC 2019 Table 10.5
         ),
         AnimalGroup(
             key="jeunes_6_12mois",
@@ -67,6 +68,7 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             diet_de=0.65, diet_ge_density=18.45,
             share_concentrate=0.20,
             grazing=0.8,
+            system="mixed",
         ),
         AnimalGroup(
             key="engraissés_12_21mois",
@@ -75,6 +77,7 @@ def build_case_study_farm(params: ParameterSet | None = None) -> FarmContext:
             diet_de=0.62, diet_ge_density=18.45,
             share_concentrate=0.35,  # grass + concentrates + co-products
             grazing=0.7,
+            system="mixed",
         ),
     ]
 
