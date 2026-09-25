@@ -134,26 +134,47 @@ def _make_enteric_measured(method: str):
     return enteric_measured
 
 
-def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__") -> Dict[str, float]:
+def _ge_density(ctx: ModelContext, g) -> float:
+    """Diet gross energy density (MJ/kg DM) of a group.
+
+    Per-group override (``AnimalGroup.diet_ge_density``) when set,
+    otherwise the shared ``diet_ge_density`` parameter (traceable,
+    Monte-Carlo propagated, same value across farms).
+    """
+    if g.diet_ge_density is not None:
+        return g.diet_ge_density
+    return ctx.v("diet_ge_density")
+
+
+def _energy_chain(
+    ctx: ModelContext,
+    g: "ModelContext.farm.animals[0].__class__",
+    ingestion_mode: str = "auto",
+) -> Dict[str, float]:
     """Gross energy intake and DMI of an animal group.
 
-    Two ration-definition modes (requirement: alternative inputs, e.g.
-    on-farm measurements):
+    Ration-definition modes (the enteric variants exist in a
+    ``_modelled_ingestion`` and an ``_ingestion_measured`` version;
+    ``auto`` keeps the historical behaviour for the generic ration
+    comparison):
 
-    * ``ipcc_equations`` (default): GE is estimated from net energy
-      requirements and diet digestibility (Eq. 10.3-10.16), then DMI
-      follows as GE / diet_ge_density.
-    * ``measured``: if the group carries ``dmi_measured`` and/or
-      ``ge_measured`` (farm measurements, e.g. ration sheets), those
-      values are used directly instead of the IPCC chain. When only
-      one of the two is provided, the other is derived from
-      ``diet_ge_density`` (GE = DMI × density, DMI = GE / density). A
-      warning is logged when the two provided measures are mutually
-      inconsistent (> 10 % departure from GE = DMI × density).
+    * ``modelled``: GE is estimated from net energy requirements
+      and diet digestibility (Eq. 10.3-10.16), then DMI follows as
+      GE / density. Measured intakes set on the group are IGNORED
+      with a warning (explicit, traceable choice of the variant).
+    * ``measured``: the on-farm measured DMI (``dmi_measured``, kg
+      DM/head/d, REQUIRED on every group) is used directly and GE is
+      derived as DMI x density (per-group override or the shared
+      ``diet_ge_density`` parameter). A ``ge_measured`` value, if
+      present, is ignored with a warning.
+    * ``auto``: ``measured`` when the group carries a measured
+      intake, ``modelled`` otherwise (historical behaviour of
+      ``ration_mode``).
 
     Args:
         ctx: model context (parameters + current values).
         g: animal group (age class).
+        ingestion_mode: "modelled", "measured" or "auto".
 
     Returns:
         a {ge_mj_day, dmi_kg_day, wg_kg_day, bw_avg, ration_mode}
@@ -163,44 +184,62 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
     # Average weight over the period and daily gain.
     bw_avg = 0.5 * (g.bw_start + g.bw_end)
     wg_day = (g.bw_end - g.bw_start) / g.days if g.days > 0 else 0.0
-
+    density = _ge_density(ctx, g)
+    mode = ingestion_mode
+    if mode == "auto":
+        mode = g.ration_mode
     # --- Mode 2: ration encoded directly from farm measurements ------
-    if g.ration_mode == "measured":
+    if mode == "measured":
         dmi = g.dmi_measured
-        ge = g.ge_measured
-        density = g.diet_ge_density
-        if dmi is not None and ge is not None:
-            if density > 0 and abs(ge - dmi * density) > 0.10 * max(ge, dmi * density, 1e-9):
-                ctx.logger.warn(
-                    "enteric",
-                    f"Measured GE ({ge:.1f} MJ/d) and DMI ({dmi:.2f} kg/d) "
-                    f"inconsistent with the diet energy density "
-                    f"({density:.2f} MJ/kg DM) for group {g.key}",
-                )
-        elif dmi is not None:
-            ge = dmi * density if density > 0 else None
-            if ge is None:
-                ctx.logger.error("enteric", f"diet_ge_density is zero for group {g.key}")
-                ge = 0.0
-        elif ge is not None:
-            dmi = ge / density if density > 0 else None
+        if dmi is None and g.ge_measured is not None:
+            # Legacy auto mode: DMI derived from a measured GE.
+            dmi = g.ge_measured / density if density > 0 else None
             if dmi is None:
-                ctx.logger.error("enteric", f"diet_ge_density is zero for group {g.key}")
+                ctx.logger.error(
+                    "enteric",
+                    f"diet energy density is zero for group {g.key}",
+                )
                 dmi = 0.0
-        if (dmi is not None and dmi <= 0) or (ge is not None and ge <= 0):
+        elif dmi is None:
+            ctx.logger.error(
+                "enteric",
+                f"dmi_measured is required for group {g.key} "
+                f"(ingestion_measured variant)",
+            )
+            raise ValueError(
+                f"dmi_measured missing for group {g.key} "
+                f"(ingestion_measured variant)"
+            )
+        if g.ge_measured is not None and g.dmi_measured is not None:
+            ctx.logger.warn(
+                "enteric",
+                f"ge_measured of group {g.key} is IGNORED: the "
+                f"ingestion_measured variants derive GE = DMI x "
+                f"diet energy density",
+            )
+        if dmi is not None and dmi <= 0:
             ctx.logger.error(
                 "enteric",
                 f"Measured intake must be positive for group {g.key} "
-                f"(got DMI={dmi}, GE={ge})",
+                f"(got DMI={dmi})",
             )
+        ge = dmi * density
         return {
-            "ge_mj_day": ge or 0.0,
-            "dmi_kg_day": dmi or 0.0,
+            "ge_mj_day": ge,
+            "dmi_kg_day": dmi,
             "wg_kg_day": wg_day,
             "bw_avg": bw_avg,
             "ration_mode": "measured",
         }
     # --- Mode 1: IPCC Tier-2 energy chain ----------------------------
+    if ingestion_mode == "modelled" and (
+        g.dmi_measured is not None or g.ge_measured is not None
+    ):
+        ctx.logger.warn(
+            "enteric",
+            f"Measured intakes set on group {g.key} are IGNORED: the "
+            f"modelled_ingestion variant uses the IPCC energy chain",
+        )
 
     # Eq. 10.3: NEm = Cfi * BW^0.75 (Cfi = 0.322 for growing cattle)
     nem = v("cfi_growing_cattle") * bw_avg ** 0.75
@@ -239,7 +278,7 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
         ge = ((nem + nea) / rem + (neg / reg if neg > 0 else 0.0)) / (de_pct / 100.0)
     if ge <= 0:
         ctx.logger.error("enteric", f"GE is zero for group {g.key}")
-    dmi = ge / g.diet_ge_density if g.diet_ge_density > 0 else 0.0
+    dmi = ge / density if density > 0 else 0.0
     return {
         "ge_mj_day": ge,
         "dmi_kg_day": dmi,
@@ -247,6 +286,39 @@ def _energy_chain(ctx: ModelContext, g: "ModelContext.farm.animals[0].__class__"
         "bw_avg": bw_avg,
         "ration_mode": "ipcc_equations",
     }
+
+
+def _with_ingestion_mode(base_func, ingestion_mode: str):
+    """Factory of ingestion-explicit variants of an enteric equation.
+
+    The emissions equations are identical; only the ration chain
+    differs, so each registered equation exists in two versions whose
+    NAME carries the information actually used (traceability, ISO
+    14040/14044):
+
+    * ``<base>_modelled_ingestion``: IPCC energy chain (Eq. 10.3 to
+      10.16); measured intakes set on the groups are IGNORED with a
+      warning.
+    * ``<base>_ingestion_measured``: on-farm measured DMI (required
+      on every group); GE is derived as DMI x diet energy density.
+
+    The wrapped function passes ``ingestion_mode`` through to the
+    energy chain of the base equation.
+
+    Args:
+        base_func: model function accepting ``ingestion_mode``.
+        ingestion_mode: "modelled" or "measured".
+
+    Returns:
+        a model function using the forced ration chain.
+    """
+    import functools
+
+    @functools.wraps(base_func)
+    def wrapped(ctx: ModelContext) -> ModelResult:
+        return base_func(ctx, ingestion_mode=ingestion_mode)
+
+    return wrapped
 
 
 def _ym_2006(ctx: ModelContext, v, g) -> float:
@@ -336,13 +408,18 @@ def _ym_fao(ctx: ModelContext, v, g) -> float:
     return ym_pct / 100.0
 
 
-def _enteric_ge_ym(ctx: ModelContext, model_name: str, ym_func) -> ModelResult:
+def _enteric_ge_ym(
+    ctx: ModelContext, model_name: str, ym_func,
+    ingestion_mode: str = "auto",
+) -> ModelResult:
     """Shared implementation of the GE × Ym variants (Eq. 10.21).
 
     Args:
         ctx: model context (farm, parameters, log).
         model_name: variant name (traceability).
         ym_func: (v, group) -> Ym fraction, specific to the variant.
+        ingestion_mode: ration chain forced by the variant
+            ("modelled"/"measured"; "auto" = historical behaviour).
 
     Returns:
         ModelResult with the total ch4_kg and a trace per age class.
@@ -352,7 +429,7 @@ def _enteric_ge_ym(ctx: ModelContext, model_name: str, ym_func) -> ModelResult:
     res.trace["per_group"] = {}
     total = 0.0
     for g in ctx.farm.animals:
-        e = _energy_chain(ctx, g)
+        e = _energy_chain(ctx, g, ingestion_mode=ingestion_mode)
         ym = ym_func(ctx, v, g) if ym_func.__code__.co_argcount == 3 else ym_func(v, g)
         # Eq. 10.21: EF kg CH4/head/yr = (GE×Ym/55.65) × days
         ef_kg = e["ge_mj_day"] * ym / v("energy_ch4_mj_per_kg") * g.days
@@ -370,7 +447,7 @@ def _enteric_ge_ym(ctx: ModelContext, model_name: str, ym_func) -> ModelResult:
     return res
 
 
-def enteric_tier2_2006(ctx: ModelContext) -> ModelResult:
+def enteric_tier2_2006(ctx: ModelContext, ingestion_mode: str = "auto") -> ModelResult:
     """Enteric methane, IPCC 2006 Tier-2 (Eq. 10.21, Table 10.12).
 
     EF = GE × Ym / 55.65 with the two tabulated Ym values of Table
@@ -383,10 +460,10 @@ def enteric_tier2_2006(ctx: ModelContext) -> ModelResult:
     Returns:
         ModelResult with the total ch4_kg and a trace per age class.
     """
-    return _enteric_ge_ym(ctx, "tier2_2006", _ym_2006)
+    return _enteric_ge_ym(ctx, "tier2_2006", _ym_2006, ingestion_mode=ingestion_mode)
 
 
-def enteric_tier2_2019(ctx: ModelContext) -> ModelResult:
+def enteric_tier2_2019(ctx: ModelContext, ingestion_mode: str = "auto") -> ModelResult:
     """Enteric methane, IPCC 2019 Refinement Tier-2.
 
     Same IPCC energy chain as 2006 (Eq. 10.3-10.16 unchanged by the
@@ -401,10 +478,10 @@ def enteric_tier2_2019(ctx: ModelContext) -> ModelResult:
     Returns:
         ModelResult with the total ch4_kg and a trace per age class.
     """
-    return _enteric_ge_ym(ctx, "tier2_2019", _ym_2019)
+    return _enteric_ge_ym(ctx, "tier2_2019", _ym_2019, ingestion_mode=ingestion_mode)
 
 
-def enteric_tier2_fao_ym(ctx: ModelContext) -> ModelResult:
+def enteric_tier2_fao_ym(ctx: ModelContext, ingestion_mode: str = "auto") -> ModelResult:
     """Enteric methane, IPCC 2006 chain with FAO digestibility-dependent Ym.
 
     Ym(%) = 9.75 − 0.05 × DE% (FAO 2010 dairy-sector LCA, GLEAM),
@@ -417,10 +494,10 @@ def enteric_tier2_fao_ym(ctx: ModelContext) -> ModelResult:
     Returns:
         ModelResult with the total ch4_kg and a trace per age class.
     """
-    return _enteric_ge_ym(ctx, "tier2_fao_ym", _ym_fao)
+    return _enteric_ge_ym(ctx, "tier2_fao_ym", _ym_fao, ingestion_mode=ingestion_mode)
 
 
-def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
+def enteric_tier3_mills(ctx: ModelContext, ingestion_mode: str = "auto") -> ModelResult:
     """Enteric methane with a Tier-3 equation (Mills et al. 2003).
 
     CH4 (MJ/d) = a × (1 − e^(−k × DMI)) with a = 10.8, k = 0.141; DMI
@@ -443,7 +520,7 @@ def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
     res.trace["per_group"] = {}
     total = 0.0
     for g in ctx.farm.animals:
-        e = _energy_chain(ctx, g)
+        e = _energy_chain(ctx, g, ingestion_mode=ingestion_mode)
         dmi = e["dmi_kg_day"]
         if dmi > 25:
             ctx.logger.warn(
@@ -463,7 +540,7 @@ def enteric_tier3_mills(ctx: ModelContext) -> ModelResult:
     return res
 
 
-def _domi(ctx: ModelContext, g) -> Dict[str, float]:
+def _domi(ctx: ModelContext, g, ingestion_mode: str = "auto") -> Dict[str, float]:
     """Digestible organic matter intake and derived quantities.
 
     Requires the explicit INRA diet fields (error when missing, no
@@ -492,14 +569,14 @@ def _domi(ctx: ModelContext, g) -> Dict[str, float]:
         raise ValueError(
             f"{missing} missing for group {g.key} (INRA Tier-3 variants)"
         )
-    e = _energy_chain(ctx, g)
+    e = _energy_chain(ctx, g, ingestion_mode=ingestion_mode)
     dmi = e["dmi_kg_day"]
     domi = dmi * g.diet_om * g.diet_omd
     ndom = dmi * g.diet_om * (1.0 - g.diet_omd)
     return {"domi_kg_day": domi, "ndom_kg_day": ndom}
 
 
-def enteric_tier3_sauvant2011(ctx: ModelContext) -> ModelResult:
+def enteric_tier3_sauvant2011(ctx: ModelContext, ingestion_mode: str = "auto") -> ModelResult:
     """Enteric methane with the INRA Tier-3 equation (Sauvant et al.
     2011, eq. [9]) — the meta-analytic basis of the French Tier-3
     inventory method (Eugène et al. 2019).
@@ -529,9 +606,9 @@ def enteric_tier3_sauvant2011(ctx: ModelContext) -> ModelResult:
     res.trace["per_group"] = {}
     total = 0.0
     for g in ctx.farm.animals:
-        e = _energy_chain(ctx, g)
+        e = _energy_chain(ctx, g, ingestion_mode=ingestion_mode)
         dmi = e["dmi_kg_day"]
-        d = _domi(ctx, g)
+        d = _domi(ctx, g, ingestion_mode=ingestion_mode)
         domi = d["domi_kg_day"]
         bw_avg = e["bw_avg"]
         na = 100.0 * dmi / bw_avg if bw_avg > 0 else 0.0
@@ -578,7 +655,7 @@ SPECS = [
         slot="enteric_ch4",
         variant="tier2_2006",
         tier="Tier-2",
-        func=enteric_tier2_2006,
+        func=_with_ingestion_mode(enteric_tier2_2006, "modelled"),
         reference=REF_T2,
         description=(
             "IPCC 2006: GE from net energy requirements; EF = GE×Ym/55.65, "
@@ -590,7 +667,7 @@ SPECS = [
         slot="enteric_ch4",
         variant="tier2_2019",
         tier="Tier-2",
-        func=enteric_tier2_2019,
+        func=_with_ingestion_mode(enteric_tier2_2019, "modelled"),
         reference=REF_T2_2019,
         description=(
             "IPCC 2019 Refinement: same energy chain, tabulated Ym from "
@@ -602,7 +679,7 @@ SPECS = [
         slot="enteric_ch4",
         variant="tier2_fao_ym",
         tier="Tier-2",
-        func=enteric_tier2_fao_ym,
+        func=_with_ingestion_mode(enteric_tier2_fao_ym, "modelled"),
         reference=REF_T2_FAO,
         description=(
             "FAO dairy LCA (GLEAM): Ym(%) = 9.75 − 0.05 × DE%, applied on "
@@ -613,7 +690,7 @@ SPECS = [
         slot="enteric_ch4",
         variant="tier3_mills",
         tier="Tier-3",
-        func=enteric_tier3_mills,
+        func=_with_ingestion_mode(enteric_tier3_mills, "modelled"),
         reference=REF_T3,
         description="Exponential saturation CH4 = 10.8×(1−e^(−0.141×DMI)).",
     ),
@@ -621,7 +698,7 @@ SPECS = [
         slot="enteric_ch4",
         variant="tier3_sauvant2011",
         tier="Tier-3",
-        func=enteric_tier3_sauvant2011,
+        func=_with_ingestion_mode(enteric_tier3_sauvant2011, "modelled"),
         reference=REF_T3_S11,
         required_group_fields=["diet_om", "diet_omd"],
         description=(
@@ -634,6 +711,49 @@ SPECS = [
     ),
 ]
 
+
+# Ingestion-explicit variants: each emissions equation exists in two
+# versions whose name carries the ration chain actually used. The
+# bare names (tier2_2006, ...) remain registered as ALIASES of the
+# modelled-ingestion version (backward compatibility).
+_INGESTION_SUFFIX = {
+    "modelled": "_modelled_ingestion",
+    "measured": "_ingestion_measured",
+}
+# Equations relying on the ration chain (measured_ahcs bypasses it).
+_CHAIN_EQUATIONS = {
+    "tier2_2006": enteric_tier2_2006,
+    "tier2_2019": enteric_tier2_2019,
+    "tier2_fao_ym": enteric_tier2_fao_ym,
+    "tier3_mills": enteric_tier3_mills,
+    "tier3_sauvant2011": enteric_tier3_sauvant2011,
+}
+
+for _base, _func in _CHAIN_EQUATIONS.items():
+    _base_spec = next(s for s in SPECS if s.variant == _base)
+    for _mode, _suffix in _INGESTION_SUFFIX.items():
+        _spec = ModelSpec(
+            slot="enteric_ch4",
+            variant=f"{_base}{_suffix}",
+            tier=_base_spec.tier,
+            func=_with_ingestion_mode(_func, _mode),
+            reference=_base_spec.reference,
+            required_group_fields=(
+                list(_base_spec.required_group_fields) + ["dmi_measured"]
+                if _mode == "measured"
+                else list(_base_spec.required_group_fields)
+            ),
+            description=(
+                f"{_base_spec.description} Ration chain: "
+                + (
+                    "IPCC energy equations (measured intakes ignored)."
+                    if _mode == "modelled"
+                    else "on-farm measured DMI (required on every "
+                    "group); GE = DMI x diet energy density."
+                )
+            ),
+        )
+        SPECS.append(_spec)
 # One measured variant per on-farm measurement method (ahcs, ...).
 for _method, (_label, _ref) in CH4_MEASUREMENT_METHODS.items():
     SPECS.append(

@@ -205,10 +205,20 @@ def build_default_parameter_set() -> ParameterSet:
         description="Energy content of methane (IPCC 2006).",
     )
     ps.add(
-        "ge_density_feed", 18.45, "MJ/kg DM",
-        distribution="normal", sd=0.5,
-        reference=Reference("IPCC 2006, Vol.4 Ch.10 (p.10.22)"),
-        description="Gross energy density of feed dry matter.",
+        "diet_ge_density", 18.45, "MJ/kg DM",
+        distribution="normal", sd=0.4,
+        reference=Reference(
+            "Standard gross energy density of cattle diets "
+            "(INRA 2018; IPCC 2006 Vol.4 Ch.10 uses 18.45 MJ/kg DM "
+            "in worked examples)"
+        ),
+        description=(
+            "Default gross energy density of the diet (MJ/kg DM); "
+            "per-group overrides via AnimalGroup.diet_ge_density take "
+            "precedence. sd=0.4 is an ASSUMED illustrative value "
+            "(invented for this engine, no published source) - "
+            "adjust to the studied production system."
+        ),
     )
     ps.add(
         "n2o_n_to_n2o", 44.0 / 28.0, "kg N2O/kg N2O-N",

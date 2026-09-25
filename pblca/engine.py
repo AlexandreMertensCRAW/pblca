@@ -666,6 +666,26 @@ class LCAEngine:
         modes = ("ipcc_equations", "measured")
         # Map the context ration mode to the switch function argument.
         mode_switch = {"ipcc_equations": "ipcc", "measured": "measured"}
+        # Map the requested enteric variant to its ingestion-explicit
+        # version so each mode uses the matching ration chain.
+        selection_by_mode = {}
+        for mode in modes:
+            sel = dict(model_selection or {})
+            enteric = sel.get("enteric_ch4") or self.registry.get(
+                "enteric_ch4"
+            ).variant
+            suffix = (
+                "_modelled_ingestion"
+                if mode == "ipcc_equations"
+                else "_ingestion_measured"
+            )
+            base = enteric
+            for tail in ("_modelled_ingestion", "_ingestion_measured"):
+                if base.endswith(tail):
+                    base = base[: -len(tail)]
+                    break
+            sel["enteric_ch4"] = f"{base}{suffix}"
+            selection_by_mode[mode] = sel
 
         central_values = self.params.central_values()
         central = {}
@@ -682,7 +702,7 @@ class LCAEngine:
             restore_parcels()
             run = self.run(
                 farms,
-                model_selection=model_selection,
+                model_selection=selection_by_mode[mode],
                 values=central_values,
                 sim_id=f"central_ration_{mode}",
                 record=False,
@@ -707,7 +727,7 @@ class LCAEngine:
                 try:
                     it = self.run(
                         farms,
-                        model_selection=central["measured"].model_selection,
+                        model_selection=selection_by_mode[mode],
                         values=drawn,
                         record=False,
                     )

@@ -47,11 +47,16 @@ CONFIG = CaseStudyConfig(
     ),
     variant_grid={
         "enteric_ch4": [
-            "tier2_2006",
-            "tier2_2019",
-            "tier2_fao_ym",
-            "tier3_mills",
-            "tier3_sauvant2011",
+            "tier2_2006_modelled_ingestion",
+            "tier2_2006_ingestion_measured",
+            "tier2_2019_modelled_ingestion",
+            "tier2_2019_ingestion_measured",
+            "tier2_fao_ym_modelled_ingestion",
+            "tier2_fao_ym_ingestion_measured",
+            "tier3_mills_modelled_ingestion",
+            "tier3_mills_ingestion_measured",
+            "tier3_sauvant2011_modelled_ingestion",
+            "tier3_sauvant2011_ingestion_measured",
             "measured_ahcs",
         ],
         "manure_ch4": ["ipcc_tier2", "tier3_eugene2019"],
@@ -60,7 +65,13 @@ CONFIG = CaseStudyConfig(
         # Coherent INRA Tier-3 chain: the digestible OM produces the
         # enteric CH4, the non-digestible OM goes to the manure.
         "inra_tier3": {
-            "enteric_ch4": "tier3_sauvant2011",
+            "enteric_ch4": "tier3_sauvant2011_modelled_ingestion",
+            "manure_ch4": "tier3_eugene2019",
+        },
+        # Same chain on the measured rations (ration sheets + GreenFeed
+        # monitoring of this farm).
+        "inra_tier3_ingestion_measured": {
+            "enteric_ch4": "tier3_sauvant2011_ingestion_measured",
             "manure_ch4": "tier3_eugene2019",
         },
     },

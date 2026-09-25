@@ -43,7 +43,12 @@ class AnimalGroup:
         bw_end: live weight at end of period (kg).
         days: duration of the period over the year (days).
         diet_de: energy digestibility of the diet (fraction, e.g. 0.65).
-        diet_ge_density: gross energy density (MJ/kg DM).
+        diet_ge_density: OPTIONAL per-group override of the diet
+            gross energy density (MJ/kg DM). When None (default),
+            the shared parameter ``diet_ge_density`` (18.45,
+            traceable, Monte-Carlo propagated) applies; set it to
+            model a group whose diet departs from the standard
+            density (e.g. milk-fed calves).
         share_concentrate: share of concentrates in the diet (DM fraction).
         milk_prot: milk protein kg/d (0 for fattening).
         milk_fat: milk fat kg/d (0 for fattening).
@@ -136,7 +141,7 @@ class AnimalGroup:
     bw_end: float
     days: float
     diet_de: float
-    diet_ge_density: float
+    diet_ge_density: Optional[float] = None
     share_concentrate: float = 0.0
     milk_prot: float = 0.0
     milk_fat: float = 0.0

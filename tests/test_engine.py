@@ -1248,3 +1248,119 @@ class TestScenarioGrid:
         # Paired ration comparison ran (measured rations available).
         assert "ration_comparison" in summary
         assert not isinstance(summary["ration_comparison"], str)
+
+
+class TestIngestionExplicitVariants:
+    """Ingestion-explicit enteric variants (modelled vs measured)."""
+
+    def test_variant_names_and_requirements(self):
+        reg = build_default_registry()
+        variants = reg.variants("enteric_ch4")
+        for base in ("tier2_2006", "tier2_2019", "tier2_fao_ym",
+                     "tier3_mills", "tier3_sauvant2011"):
+            assert f"{base}_modelled_ingestion" in variants
+            assert f"{base}_ingestion_measured" in variants
+            # Measured version requires dmi_measured (+ INRA fields
+            # for Sauvant).
+            spec_m = reg.get("enteric_ch4", f"{base}_ingestion_measured")
+            assert "dmi_measured" in spec_m.required_group_fields
+        # measured_ahcs is not doubled (bypasses the ration chain).
+        assert "measured_ahcs_modelled_ingestion" not in variants
+
+    def test_measured_variant_uses_dmi_and_derives_ge(self, engine):
+        farm = build_case_study_farm(engine.params)
+        dmi = {"veaux_0_6mois": 4.2, "jeunes_6_12mois": 7.4,
+               "engraissés_12_21mois": 10.2}
+        density = 18.45
+        for a in farm.animals:
+            a.dmi_measured = dmi[a.key]
+            a.ge_measured = None
+        r = engine.run(
+            farm,
+            model_selection={"enteric_ch4": "tier2_2006_ingestion_measured"},
+            record=False,
+        )
+        tr = r.model_outputs["enteric_ch4"]["trace"]["per_group"]
+        for key, value in dmi.items():
+            assert tr[key]["dmi_kg_day"] == pytest.approx(value)
+            assert tr[key]["ge_mj_day"] == pytest.approx(value * density)
+
+    def test_modelled_variant_ignores_measured_intakes(self, engine):
+        farm = build_case_study_farm(engine.params)
+        for a in farm.animals:
+            a.dmi_measured = 99.9  # absurd value, must be ignored
+        r_mod = engine.run(
+            farm,
+            model_selection={"enteric_ch4": "tier2_2006_modelled_ingestion"},
+            record=False,
+        )
+        r_bare = engine.run(
+            farm,
+            model_selection={"enteric_ch4": "tier2_2006"},
+            record=False,
+        )
+        # Bare name = modelled_ingestion alias: identical emissions.
+        assert sum(
+            e.amount_kg for e in r_mod.ledger.entries()
+            if e.source == "enteric"
+        ) == pytest.approx(sum(
+            e.amount_kg for e in r_bare.ledger.entries()
+            if e.source == "enteric"
+        ))
+        # The absurd measured DMI did not leak into the trace.
+        tr = r_mod.model_outputs["enteric_ch4"]["trace"]["per_group"]
+        assert all(t["dmi_kg_day"] < 30 for t in tr.values())
+        # Ignoring warnings were logged (one per group).
+        warns = [m for m in r_mod.diagnostics
+                 if m["level"] == "WARNING" and "IGNORED" in m["message"]]
+        assert len(warns) == len(farm.animals)
+
+    def test_measured_variant_excluded_without_dmi(self, engine):
+        # No measurement: the grid excludes the ingestion_measured
+        # variants automatically.
+        from pblca.scenarios import CaseStudyConfig, run_scenario_grid
+
+        config = CaseStudyConfig(
+            name="nodmi_farm",
+            farm_builder=build_case_study_farm,
+            variant_grid={
+                "enteric_ch4": [
+                    "tier2_2006_modelled_ingestion",
+                    "tier2_2006_ingestion_measured",
+                ],
+            },
+        )
+        records = run_scenario_grid(engine, config, record=True)
+        by_variant = {r.model_selection["enteric_ch4"]: r for r in records}
+        assert not by_variant["tier2_2006_modelled_ingestion"].excluded
+        assert by_variant["tier2_2006_ingestion_measured"].excluded
+        assert "dmi_measured" in by_variant[
+            "tier2_2006_ingestion_measured"
+        ].reason
+
+    def test_mc_per_group_stats_ingestion_measured(self, engine):
+        farm = build_case_study_farm(engine.params)
+        dmi = {"veaux_0_6mois": 4.2, "jeunes_6_12mois": 7.4,
+               "engraissés_12_21mois": 10.2}
+        for a in farm.animals:
+            a.dmi_measured = dmi[a.key]
+            a.ration_rel_sd = 0.10
+        mc = engine.run_monte_carlo(
+            farm, n_iterations=20, seed=11,
+            model_selection={"enteric_ch4": "tier2_2006_ingestion_measured"},
+            record=False,
+        )
+        groups = mc["enteric_ch4_per_group_kg"]
+        assert set(groups) == set(dmi)
+        for stats in groups.values():
+            assert stats["sd"] > 0  # ration_rel_sd propagates
+        mc_bare = engine.run_monte_carlo(
+            farm, n_iterations=20, seed=11,
+            model_selection={"enteric_ch4": "tier2_2006_modelled_ingestion"},
+            record=False,
+        )
+        sd_mod = mc_bare["gas_totals_kg"]["CH4"]["sd"]
+        # measured rations add their quantification error -> wider sd
+        # than the modelled chain (which ignores them).
+        assert groups["veaux_0_6mois"]["sd"] > 0
+        assert mc["gas_totals_kg"]["CH4"]["sd"] > sd_mod
