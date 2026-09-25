@@ -52,6 +52,21 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   Rscript R/plot_enteric_ch4_per_head_day.R results.json
   ```
 
+- `plot_ration_comparison_correlation.R` — reads the paired
+  per-iteration enteric CH4 samples of the ration-comparison entry
+  (`uncertainty$enteric_ch4_samples`: one value per animal group and
+  per farm total, for both ration modes) and scatter-plots the
+  draws of the same Monte-Carlo iteration: x = IPCC energy chain
+  (`tier2_2006_modelled_ingestion`), y = measured ration
+  (`tier2_2006_ingestion_measured`), one facet per group with the
+  Pearson correlation coefficient and the 1:1 line. Shows how much
+  of the uncertainty is common to the two chains.
+  Output: `R/fig_correlation_rations.png`.
+
+  ```bash
+  Rscript R/plot_ration_comparison_correlation.R results.json
+  ```
+
 ## Dependencies
 
 ```r

@@ -959,6 +959,44 @@ class TestEngine:
             c2["gwp100"]["measured"]["mean"]
         )
 
+    def test_ration_comparison_paired_enteric_samples(self, engine, farm):
+        """run_ration_comparison records the per-iteration paired
+        enteric CH4 samples (per group + farm total, both modes) so
+        the R correlation figure can scatter-plot them; the paired
+        farm-total series share the parameter uncertainty."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.10
+        cmp = engine.run_ration_comparison(
+            farm, n_iterations=12, seed=4, record=True,
+        )
+        samples = cmp["enteric_ch4_samples"]
+        assert set(samples) == {"ipcc_equations", "measured"}
+        for mode in ("ipcc_equations", "measured"):
+            keys = set(samples[mode])
+            assert "farm_total" in keys
+            for key in keys:
+                assert len(samples[mode][key]) == 12
+        # The paired draws share the parameter uncertainty: the two
+        # farm-total series are positively correlated but not equal
+        # (the ration information differs).
+        x = samples["ipcc_equations"]["farm_total"]
+        y = samples["measured"]["farm_total"]
+        assert len(x) == len(y) == 12
+        mx, my = sum(x) / len(x), sum(y) / len(y)
+        cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
+        assert cov > 0
+        assert x != y
+        # JSON entry carries the same section.
+        entry = [
+            e for e in engine.datastore._entries
+            if "enteric_ch4_samples" in e.get("uncertainty", {})
+        ][0]
+        assert (
+            entry["uncertainty"]["enteric_ch4_samples"] == samples
+        )
+
     def test_mc_propagates_ration_uncertainty(self, engine, farm):
         """run_monte_carlo must also propagate the measured-ration
         quantification error (part of the input uncertainty)."""

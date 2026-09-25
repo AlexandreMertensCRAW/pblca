@@ -687,7 +687,10 @@ class LCAEngine:
             a dictionary with, per indicator and per gas: the statistics
             of each mode, the paired difference (measured − ipcc) and
             the relative reduction of the standard deviation
-            (precision gain: 1 − sd_measured/sd_ipcc).
+            (precision gain: 1 − sd_measured/sd_ipcc); under
+            ``enteric_ch4_samples`` the per-iteration paired enteric CH4
+            samples (per group and farm total) used by the R
+            correlation figure.
         """
         if isinstance(farms, FarmContext):
             farms = [farms]
@@ -763,6 +766,19 @@ class LCAEngine:
 
         summary = self.registry.selection_summary(central["measured"].model_selection)
 
+        # Paired per-iteration enteric CH4 samples, per group and
+        # farm total (the R correlation figure scatter-plots the
+        # modelled vs measured draws of the same iteration).
+        group_keys = list(
+            central["ipcc_equations"]
+            .model_outputs.get("enteric_ch4", {})
+            .get("trace", {})
+            .get("per_group", {})
+        )
+        enteric_samples: Dict[str, Dict[str, List[float]]] = {
+            m: {k: [] for k in [*group_keys, "farm_total"]} for m in modes
+        }
+
         for _ in range(n_iterations):
             drawn = self.params.draw(rng)
             for mode in modes:
@@ -789,10 +805,32 @@ class LCAEngine:
                     impact_samples[mode][k].append(v)
                 for g in GASES:
                     gas_samples[mode][g].append(it.ledger.total(g))
+                per_group = (
+                    it.model_outputs.get("enteric_ch4", {})
+                    .get("trace", {})
+                    .get("per_group", {})
+                )
+                for key in group_keys:
+                    block = per_group.get(key)
+                    if block is not None and "ch4_kg" in block:
+                        enteric_samples[mode][key].append(block["ch4_kg"])
+                enteric_samples[mode]["farm_total"].append(
+                    it.ledger.total("CH4")
+                )
 
         # Restore the original ration definition (idempotence).
         _set_ration_mode(ration_state, "measured")
         restore_parcels()
+
+        # Trim the samples to complete (paired) iterations only: an
+        # iteration with a failed mode contributes to neither side.
+        n_pairs = min(
+            len(enteric_samples["ipcc_equations"]["farm_total"]),
+            len(enteric_samples["measured"]["farm_total"]),
+        )
+        for mode in modes:
+            for key in enteric_samples[mode]:
+                enteric_samples[mode][key] = enteric_samples[mode][key][:n_pairs]
 
         out: Dict[str, Any] = {
             "sim_id": "ration_comparison",
@@ -830,6 +868,13 @@ class LCAEngine:
             meas_s = gas_samples["measured"][gas]
             if len(ipcc_s) == 0 or len(meas_s) == 0:
                 continue
+            # Enteric CH4 per-group paired samples (correlation
+            # figure): same length as the farm-total samples.
+            if gas == "CH4":
+                out["enteric_ch4_samples"] = {
+                    "ipcc_equations": enteric_samples["ipcc_equations"],
+                    "measured": enteric_samples["measured"],
+                }
             n_pairs = min(len(ipcc_s), len(meas_s))
             paired_diff = [meas_s[i] - ipcc_s[i] for i in range(n_pairs)]
             ipcc_stats = _stats(ipcc_s)
