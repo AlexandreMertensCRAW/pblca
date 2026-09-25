@@ -80,7 +80,11 @@ p <- ggplot(df, aes(x = lot, y = central_kg)) +
     x = "Lot",
     y = "CH4 entérique (kg/an)"
   ) +
-  theme_minimal()
+  theme_bw() +
+  theme(
+    panel.grid.major = element_line(colour = "grey90"),
+    panel.grid.minor = element_blank()
+  )
 
 ggsave(out_png, p, width = 7, height = 5, dpi = 150)
 message("Figure saved: ", out_png, " (variant: ", variant, ")")

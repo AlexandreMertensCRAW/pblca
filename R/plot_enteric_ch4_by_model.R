@@ -77,7 +77,7 @@ p <- ggplot(df, aes(x = modele, y = central_kg)) +
     x = "Modèle (variante enteric_ch4)",
     y = "CH4 entérique (kg/an)"
   ) +
-  theme_minimal(base_size = 11) +
+  theme_bw(base_size = 11) +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 
 ggsave(out_png, p, width = 8, height = 10, dpi = 150)
