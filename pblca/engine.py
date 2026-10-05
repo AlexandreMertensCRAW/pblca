@@ -1,4 +1,4 @@
-"""Orchestration engine: simulations, Monte-Carlo, JSON storage.
+"""Orchestration engine: simulations and JSON storage.
 
 Central role (ISO 14040/14044 compliance):
 
@@ -9,11 +9,17 @@ Central role (ISO 14040/14044 compliance):
 2. fill the gas ledger (layer 2) with full traceability (source, model,
    bibliographic reference);
 3. characterise the impacts (layer 3: GWP100, GWP20, GWP*);
-4. propagate uncertainties by Monte-Carlo: at each iteration,
-   ``ParameterSet.draw`` draws ONE value per parameter, shared by every
-   farm and every process using it (farm 1 and farm 2 receive the same
-   draw — explicit requirement);
+4. propagate uncertainties by Monte-Carlo: the sampling layer
+   :mod:`pblca.mc` (single owner of the Monte-Carlo invariants) draws,
+   at each iteration, ONE value per parameter via ``ParameterSet.draw``,
+   shared by every farm and every process using it (farm 1 and farm 2
+   receive the same draw — explicit requirement), while the process
+   models remain pure evaluators reading ``ModelContext``;
 5. store each simulation (one entry) in a structured JSON file.
+
+``LCAEngine`` is the public façade: ``run_monte_carlo`` and
+``run_ration_comparison`` delegate to :mod:`pblca.mc` without any
+change of signature or behaviour.
 """
 
 from __future__ import annotations
@@ -25,10 +31,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-import numpy as np
-
-from .gases import GASES, GasLedger
+from .gases import GasLedger
 from .impacts import GwpStarInputs, characterize
+from .mc import run_monte_carlo as _mc_run_monte_carlo
+from .mc import run_ration_comparison as _mc_run_ration_comparison
 from .params import ParameterSet, build_default_parameter_set
 from .registry import (
     DiagLogger,
@@ -130,116 +136,6 @@ class DataStore:
 
     def __len__(self) -> int:
         return len(self._entries)
-
-
-def _stats(samples: List[float]) -> Dict[str, float]:
-    """Descriptive statistics of a sample (mean, sd, percentiles, n)."""
-    a = np.asarray(samples, dtype=float)
-    if a.size == 0:
-        return {"mean": float("nan"), "sd": float("nan"),
-                "p5": float("nan"), "p50": float("nan"),
-                "p95": float("nan"), "n": 0}
-    return {
-        "mean": float(a.mean()),
-        "sd": float(a.std(ddof=1)) if a.size > 1 else 0.0,
-        "p5": float(np.percentile(a, 5)),
-        "p50": float(np.percentile(a, 50)),
-        "p95": float(np.percentile(a, 95)),
-        "n": int(a.size),
-    }
-
-
-def _set_ration_mode(ration_state: List[tuple], mode: str) -> None:
-    """Force the ration-definition mode on the animal groups (in place).
-
-    ``ration_state`` is a snapshot of
-    (group, dmi_measured, ge_measured, ration_rel_sd, ch4_measures)
-    tuples taken before the comparison. ``mode`` is either
-    ``"ipcc"`` (ration measures temporarily removed: the IPCC energy
-    chain is used everywhere) or ``"measured"`` (the snapshot values
-    are restored; groups carrying measures use them). The measured
-    enteric-CH4 values are always restored to their snapshot values
-    (they are perturbed independently, see
-    ``_perturb_measured_rations``).
-    """
-    for record in ration_state:
-        group, dmi, ge, _rel_sd, ch4_measures = (
-            record[0], record[1], record[2], record[3], record[4]
-        )
-        if mode == "ipcc":
-            group.dmi_measured = None
-            group.ge_measured = None
-        else:
-            group.dmi_measured = dmi
-            group.ge_measured = ge
-        for method, value, _sd in ch4_measures:
-            setattr(group, f"ch4_measured_{method}", value)
-
-
-def _perturb_measured_rations(
-    ration_state: List[tuple], rng: "np.random.Generator"
-) -> None:
-    """Apply the measured-ration quantification error (in place).
-
-    Uncertainty of the on-farm measurements: one multiplicative
-    lognormal factor (median 1, sigma = ``ration_rel_sd``) is drawn per
-    group and per Monte-Carlo iteration and applied to BOTH the
-    measured DMI and the measured GE. Intake and gross energy are
-    scaled together: the ratio GE = DMI × diet_ge_density is preserved
-    and the perturbation represents a genuine ration-quantification
-    error (over/under-estimation of the distributed quantity), not a
-    feed-analysis error. Groups without measures or without
-    ``ration_rel_sd`` are left untouched.
-
-    The measured enteric CH4 (``ch4_measured_<method>`` fields) is
-    perturbed independently per method with its own lognormal factor
-    (sigma = ``ch4_measured_<method>_rel_sd``), so the measurement
-    uncertainty of each method propagates through the Monte-Carlo.
-
-    Call AFTER ``_set_ration_mode(..., "measured")``; the snapshot
-    values are restored by the next ``_set_ration_mode`` call.
-    """
-    for record in ration_state:
-        group, dmi, ge, rel_sd, ch4_measures = (
-            record[0], record[1], record[2], record[3], record[4]
-        )
-        if (dmi is not None or ge is not None) and rel_sd and rel_sd > 0:
-            factor = float(rng.lognormal(0.0, rel_sd))
-            if dmi is not None:
-                group.dmi_measured = dmi * factor
-            if ge is not None:
-                group.ge_measured = ge * factor
-        for method, value, sd in ch4_measures:
-            if value is not None and sd and sd > 0:
-                factor = float(rng.lognormal(0.0, sd))
-                setattr(group, f"ch4_measured_{method}", value * factor)
-
-
-def _ration_snapshot(farms: Sequence[FarmContext]) -> List[tuple]:
-    """Snapshot of the measured values of every animal group.
-
-    Captures the measured ration (DMI, GE and their relative sd)
-    and every measured enteric-CH4 method value (with its relative
-    sd), so that the Monte-Carlo perturbations can be applied from
-    the unperturbed values and fully restored afterwards.
-    """
-    from .processes.enteric import CH4_MEASUREMENT_METHODS
-
-    snapshot = []
-    for f in farms:
-        for g in f.animals:
-            ch4_measures = [
-                (
-                    method,
-                    getattr(g, f"ch4_measured_{method}", None),
-                    getattr(g, f"ch4_measured_{method}_rel_sd", None),
-                )
-                for method in CH4_MEASUREMENT_METHODS
-            ]
-            snapshot.append(
-                (g, g.dmi_measured, g.ge_measured, g.ration_rel_sd, ch4_measures)
-            )
-    return snapshot
 
 
 def _distribute_manure_n(farm: FarmContext, n_organic_total: float) -> None:
@@ -438,12 +334,14 @@ class LCAEngine:
         return_traces: bool = False,
         sim_id: str = "central",
     ) -> Dict[str, Any]:
-        """Uncertainty propagation by Monte-Carlo.
+        """Uncertainty propagation by Monte-Carlo (delegates to
+        :func:`pblca.mc.run_monte_carlo`).
 
-        At each iteration, ``ParameterSet.draw`` draws ONE value per
-        parameter; this value is used by every farm and every process
-        depending on that parameter (farm 1 and farm 2 share the same
-        draw — explicit requirement).
+        At each iteration, ONE value per parameter is drawn and shared
+        by every farm and every process using that parameter. See the
+        full contract in :mod:`pblca.mc` (single owner of the
+        Monte-Carlo invariants: sampling, ration perturbation,
+        idempotence).
 
         Args:
             farms: one farm or a list of farms.
@@ -465,180 +363,16 @@ class LCAEngine:
             statistics per indicator {mean, sd, p5, p50, p95, n} and
             per gas, plus the central impacts and the model selection.
         """
-        if isinstance(farms, FarmContext):
-            farms = [farms]
-        farms = list(farms)
-        rng = np.random.default_rng(seed)
-
-        # Snapshot BEFORE any run: run() mutates n_organic_spread
-        # (manure redistribution); the snapshot must capture the
-        # original state to restore the parcels at each iteration.
-        base_organic = {
-            (f.farm_id, p.key): p.n_organic_spread
-            for f in farms for p in f.parcels
-        }
-
-        def restore_parcels() -> None:
-            for f in farms:
-                for p in f.parcels:
-                    p.n_organic_spread = base_organic[(f.farm_id, p.key)]
-
-        ration_state = _ration_snapshot(farms)
-        has_measures = any(
-            (dmi is not None or ge is not None)
-            or any(v is not None and sd for _, v, sd in ch4_measures)
-            for _, dmi, ge, _, ch4_measures in ration_state
-        )
-
-        # Central simulation (reference). It is recorded through the
-        # MC summary entry below (record) — not twice.
-        central_values = self.params.central_values()
-        central = self.run(
+        return _mc_run_monte_carlo(
+            self,
             farms,
+            n_iterations=n_iterations,
             model_selection=model_selection,
-            values=central_values,
+            seed=seed,
+            record=record,
+            return_traces=return_traces,
             sim_id=sim_id,
-            record=False,
         )
-        summary = self.registry.selection_summary(central.model_selection)
-        restore_parcels()
-
-        impact_samples: Dict[str, List[float]] = {k: [] for k in central.impacts}
-        gas_samples: Dict[str, List[float]] = {g: [] for g in GASES}
-        # Per-animal-group enteric CH4 samples (the enteric variant
-        # traces ch4_kg per group; a None trace means the selected
-        # variant provides no per-group breakdown — e.g. a variant
-        # that would fail before tracing, the samples stay empty).
-        group_keys = list(
-            central.model_outputs.get("enteric_ch4", {})
-            .get("trace", {})
-            .get("per_group", {})
-        )
-        group_ch4_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
-        # Per-head-per-day enteric CH4 samples (g CH4/head/day, the
-        # AHCS measurement unit; derived by the enteric variants from
-        # the same trace, so the uncertainty is propagated identically).
-        group_ch4_day_samples: Dict[str, List[float]] = {k: [] for k in group_keys}
-        # Per-management-system manure CH4 samples (the manure
-        # variants trace ch4_kg by storage/handling system: pasture,
-        # solid storage, ...).
-        system_keys = list(
-            central.model_outputs.get("manure_ch4", {})
-            .get("trace", {})
-            .get("systems", {})
-        )
-        system_ch4_samples: Dict[str, List[float]] = {
-            k: [] for k in system_keys
-        }
-        failed = 0
-        iteration_outputs: List[Dict[str, Any]] = []
-        for _ in range(n_iterations):
-            drawn = self.params.draw(rng)
-            restore_parcels()
-            if has_measures:
-                _perturb_measured_rations(ration_state, rng)
-            try:
-                it = self.run(
-                    farms,
-                    model_selection=central.model_selection,
-                    values=drawn,
-                    record=False,
-                )
-            except Exception:
-                failed += 1
-                continue
-            for k, v in it.impacts.items():
-                impact_samples[k].append(v)
-            for g in GASES:
-                gas_samples[g].append(it.ledger.total(g))
-            for key in group_keys:
-                trace = (
-                    it.model_outputs.get("enteric_ch4", {})
-                    .get("trace", {})
-                    .get("per_group", {})
-                    .get(key)
-                )
-                if trace is not None and "ch4_kg" in trace:
-                    group_ch4_samples[key].append(trace["ch4_kg"])
-                if trace is not None and trace.get("ch4_g_day") is not None:
-                    group_ch4_day_samples[key].append(trace["ch4_g_day"])
-            for key in system_keys:
-                ch4_sys = (
-                    it.model_outputs.get("manure_ch4", {})
-                    .get("trace", {})
-                    .get("systems", {})
-                    .get(key)
-                )
-                if ch4_sys is not None:
-                    system_ch4_samples[key].append(ch4_sys)
-            if return_traces:
-                iteration_outputs.append(it.model_outputs)
-        restore_parcels()
-        _set_ration_mode(ration_state, "measured")
-
-        stats = {k: _stats(v) for k, v in impact_samples.items()}
-        gas_stats = {
-            g: _stats(v) for g, v in gas_samples.items() if len(v) > 0
-        }
-        central_groups = (
-            central.model_outputs.get("enteric_ch4", {})
-            .get("trace", {})
-            .get("per_group", {})
-        )
-        group_stats = {
-            k: {
-                **_stats(v),
-                "central_kg": central_groups.get(k, {}).get("ch4_kg"),
-            }
-            for k, v in group_ch4_samples.items()
-            if len(v) > 0
-        }
-        group_g_day_stats = {
-            k: {
-                **_stats(v),
-                "central_g_day": central_groups.get(k, {}).get("ch4_g_day"),
-            }
-            for k, v in group_ch4_day_samples.items()
-            if len(v) > 0
-        }
-        uncertainty = {
-            "method": "Monte-Carlo",
-            "n_iterations": n_iterations,
-            "seed": seed,
-            "failed_iterations": failed,
-            "impacts": stats,
-            "gas_totals_kg": gas_stats,
-        }
-        if group_stats:
-            uncertainty["enteric_ch4_per_group_kg"] = group_stats
-        if group_g_day_stats:
-            uncertainty["enteric_ch4_per_group_g_day"] = group_g_day_stats
-        central_systems = (
-            central.model_outputs.get("manure_ch4", {})
-            .get("trace", {})
-            .get("systems", {})
-        )
-        system_stats = {
-            k: {
-                **_stats(v),
-                "central_kg": central_systems.get(k),
-            }
-            for k, v in system_ch4_samples.items()
-            if len(v) > 0
-        }
-        if system_stats:
-            uncertainty["manure_ch4_by_system_kg"] = system_stats
-        if record:
-            self._record(central, summary, central_values, uncertainty=uncertainty)
-        result = {
-            "sim_id": "monte_carlo",
-            "model_selection": summary,
-            "central_impacts": central.impacts,
-            **uncertainty,
-        }
-        if return_traces:
-            result["iteration_outputs"] = iteration_outputs
-        return result
 
     # ------------------------------------------------------------------
     # Paired Monte-Carlo: IPCC equations vs measured rations
@@ -651,30 +385,17 @@ class LCAEngine:
         seed: Optional[int] = None,
         record: bool = True,
     ) -> Dict[str, Any]:
-        """Paired evaluation of the two ration-definition modes.
+        """Paired evaluation of the two ration-definition modes
+        (delegates to :func:`pblca.mc.run_ration_comparison`).
 
         At each Monte-Carlo iteration, ONE parameter draw is performed
-        and the farms are evaluated TWICE with this same draw:
-
-        * ``ipcc_equations``: every group's measured values are
-          temporarily removed, so the IPCC energy chain (Eq. 10.3-10.16)
-          drives enteric CH4 and manure fluxes;
-        * ``measured``: the measured DMI/GE values are restored, so
-          enteric CH4 and manure fluxes rely on the farm data.
-
-        Because the two evaluations of an iteration share the same
-        parameter draw (and therefore the same EF1, Ym, B0, ...), the
-        paired difference between the two modes isolates the effect of
-        the additional ration information. The respective standard
-        deviations quantify its effect on the precision of the result.
-
-        The measured mode also propagates the quantification error of
-        the on-farm measurements: one multiplicative lognormal factor
-        per group and per iteration (median 1, sigma = the group's
-        ``ration_rel_sd``) is applied to both ``dmi_measured`` and
-        ``ge_measured``. With ``ration_rel_sd=None`` (default) the
-        measurements are treated as exact and no perturbation is
-        applied.
+        and the farms are evaluated TWICE with this same draw
+        (``ipcc_equations``: IPCC energy chain everywhere;
+        ``measured``: on-farm DMI/GE values restored). The paired
+        difference isolates the effect of the additional ration
+        information; the shared draw guarantees that only the ration
+        mode differs between the two evaluations of an iteration. See
+        the full contract in :mod:`pblca.mc`.
 
         Args:
             farms: one farm or a list of farms.
@@ -692,213 +413,11 @@ class LCAEngine:
             samples (per group and farm total) used by the R
             correlation figure.
         """
-        if isinstance(farms, FarmContext):
-            farms = [farms]
-        farms = list(farms)
-
-        # Groups without measurements are identical in both modes; a
-        # comparison is only meaningful if at least one group carries
-        # measured values.
-        ration_state = _ration_snapshot(farms)
-        if not any(dmi is not None or ge is not None for _, dmi, ge, _, _ in ration_state):
-            raise ValueError(
-                "run_ration_comparison requires at least one animal group "
-                "with dmi_measured and/or ge_measured set"
-            )
-
-        rng = np.random.default_rng(seed)
-        base_organic = {
-            (f.farm_id, p.key): p.n_organic_spread
-            for f in farms for p in f.parcels
-        }
-
-        def restore_parcels() -> None:
-            for f in farms:
-                for p in f.parcels:
-                    p.n_organic_spread = base_organic[(f.farm_id, p.key)]
-
-        modes = ("ipcc_equations", "measured")
-        # Map the context ration mode to the switch function argument.
-        mode_switch = {"ipcc_equations": "ipcc", "measured": "measured"}
-        # Map the requested enteric variant to its ingestion-explicit
-        # version so each mode uses the matching ration chain.
-        selection_by_mode = {}
-        for mode in modes:
-            sel = dict(model_selection or {})
-            enteric = sel.get("enteric_ch4") or self.registry.get(
-                "enteric_ch4"
-            ).variant
-            suffix = (
-                "_modelled_ingestion"
-                if mode == "ipcc_equations"
-                else "_ingestion_measured"
-            )
-            base = enteric
-            for tail in ("_modelled_ingestion", "_ingestion_measured"):
-                if base.endswith(tail):
-                    base = base[: -len(tail)]
-                    break
-            sel["enteric_ch4"] = f"{base}{suffix}"
-            selection_by_mode[mode] = sel
-
-        central_values = self.params.central_values()
-        central = {}
-        impact_samples: Dict[str, Dict[str, List[float]]] = {
-            m: {} for m in modes
-        }
-        gas_samples: Dict[str, Dict[str, List[float]]] = {
-            m: {g: [] for g in GASES} for m in modes
-        }
-        failed = {m: 0 for m in modes}
-
-        for mode in modes:
-            _set_ration_mode(ration_state, mode_switch[mode])
-            restore_parcels()
-            run = self.run(
-                farms,
-                model_selection=selection_by_mode[mode],
-                values=central_values,
-                sim_id=f"central_ration_{mode}",
-                record=False,
-            )
-            central[mode] = run
-            impact_samples[mode] = {k: [] for k in run.impacts}
-
-        summary = self.registry.selection_summary(central["measured"].model_selection)
-
-        # Paired per-iteration enteric CH4 samples, per group and
-        # farm total (the R correlation figure scatter-plots the
-        # modelled vs measured draws of the same iteration).
-        group_keys = list(
-            central["ipcc_equations"]
-            .model_outputs.get("enteric_ch4", {})
-            .get("trace", {})
-            .get("per_group", {})
+        return _mc_run_ration_comparison(
+            self,
+            farms,
+            n_iterations=n_iterations,
+            model_selection=model_selection,
+            seed=seed,
+            record=record,
         )
-        enteric_samples: Dict[str, Dict[str, List[float]]] = {
-            m: {k: [] for k in [*group_keys, "farm_total"]} for m in modes
-        }
-
-        for _ in range(n_iterations):
-            drawn = self.params.draw(rng)
-            for mode in modes:
-                # The measured mode propagates the quantification error
-                # of the on-farm measurements: one lognormal factor per
-                # group and per iteration, applied to both DMI and GE.
-                # The ipcc mode ignores the measurements entirely, so
-                # the pairing on the parameter draw is preserved.
-                _set_ration_mode(ration_state, mode_switch[mode])
-                if mode == "measured":
-                    _perturb_measured_rations(ration_state, rng)
-                restore_parcels()
-                try:
-                    it = self.run(
-                        farms,
-                        model_selection=selection_by_mode[mode],
-                        values=drawn,
-                        record=False,
-                    )
-                except Exception:
-                    failed[mode] += 1
-                    continue
-                for k, v in it.impacts.items():
-                    impact_samples[mode][k].append(v)
-                for g in GASES:
-                    gas_samples[mode][g].append(it.ledger.total(g))
-                per_group = (
-                    it.model_outputs.get("enteric_ch4", {})
-                    .get("trace", {})
-                    .get("per_group", {})
-                )
-                for key in group_keys:
-                    block = per_group.get(key)
-                    if block is not None and "ch4_kg" in block:
-                        enteric_samples[mode][key].append(block["ch4_kg"])
-                enteric_samples[mode]["farm_total"].append(
-                    it.ledger.total("CH4")
-                )
-
-        # Restore the original ration definition (idempotence).
-        _set_ration_mode(ration_state, "measured")
-        restore_parcels()
-
-        # Trim the samples to complete (paired) iterations only: an
-        # iteration with a failed mode contributes to neither side.
-        n_pairs = min(
-            len(enteric_samples["ipcc_equations"]["farm_total"]),
-            len(enteric_samples["measured"]["farm_total"]),
-        )
-        for mode in modes:
-            for key in enteric_samples[mode]:
-                enteric_samples[mode][key] = enteric_samples[mode][key][:n_pairs]
-
-        out: Dict[str, Any] = {
-            "sim_id": "ration_comparison",
-            "method": "paired Monte-Carlo",
-            "n_iterations": n_iterations,
-            "seed": seed,
-            "failed_iterations": failed,
-            "model_selection": summary,
-        }
-
-        indicators = list(central["measured"].impacts)
-        for indicator in indicators:
-            ipcc_s = impact_samples["ipcc_equations"][indicator]
-            meas_s = impact_samples["measured"][indicator]
-            n_pairs = min(len(ipcc_s), len(meas_s))
-            paired_diff = [
-                meas_s[i] - ipcc_s[i] for i in range(n_pairs)
-            ]
-            ipcc_stats = _stats(ipcc_s)
-            meas_stats = _stats(meas_s)
-            sd_ipcc = ipcc_stats["sd"]
-            sd_meas = meas_stats["sd"]
-            precision_gain = float("nan")
-            if sd_ipcc > 0 and not np.isnan(sd_meas):
-                precision_gain = 1.0 - sd_meas / sd_ipcc
-            out[indicator] = {
-                "ipcc_equations": ipcc_stats,
-                "measured": meas_stats,
-                "paired_difference": _stats(paired_diff),
-                "precision_gain_sd": precision_gain,
-            }
-
-        for gas in GASES:
-            ipcc_s = gas_samples["ipcc_equations"][gas]
-            meas_s = gas_samples["measured"][gas]
-            if len(ipcc_s) == 0 or len(meas_s) == 0:
-                continue
-            # Enteric CH4 per-group paired samples (correlation
-            # figure): same length as the farm-total samples.
-            if gas == "CH4":
-                out["enteric_ch4_samples"] = {
-                    "ipcc_equations": enteric_samples["ipcc_equations"],
-                    "measured": enteric_samples["measured"],
-                }
-            n_pairs = min(len(ipcc_s), len(meas_s))
-            paired_diff = [meas_s[i] - ipcc_s[i] for i in range(n_pairs)]
-            ipcc_stats = _stats(ipcc_s)
-            meas_stats = _stats(meas_s)
-            sd_ipcc = ipcc_stats["sd"]
-            sd_meas = meas_stats["sd"]
-            precision_gain = float("nan")
-            if sd_ipcc > 0 and not np.isnan(sd_meas):
-                precision_gain = 1.0 - sd_meas / sd_ipcc
-            out[f"{gas}_totals"] = {
-                "ipcc_equations": ipcc_stats,
-                "measured": meas_stats,
-                "paired_difference": _stats(paired_diff),
-                "precision_gain_sd": precision_gain,
-            }
-
-        if record:
-            self._record(
-                central["measured"],
-                summary,
-                central_values,
-                uncertainty={
-                    k: v for k, v in out.items()
-                    if k not in ("sim_id", "method")
-                },
-            )
-        return out

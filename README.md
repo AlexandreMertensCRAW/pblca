@@ -24,9 +24,14 @@ modèles (Tier-2 / Tier-3 interchangeables) et traçabilité des références bi
         │                │                    │
   pblca/params.py   pblca/registry.py   pblca/engine.py
   (paramètres       (registre de        (orchestration,
-   traçables +       modèles,            Monte-Carlo,
-   incertitudes)     interface           stockage JSON)
+   traçables +       modèles,            stockage JSON)
+   incertitudes)     interface
                      universelle)
+
+Sous-couche d'échantillonnage de la couche 1 : pblca/mc.py
+(génération des valeurs Monte-Carlo — tirages, perturbation des
+rations mesurées, idempotence) ; les processus de pblca/processes/
+restent des évaluateurs purs et l'engine en reste la façade.
 ```
 
 ## Installation
