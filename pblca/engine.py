@@ -111,15 +111,48 @@ class DataStore:
             }
           ]
         }
+
+    Lifecycle of the file: when an existing results file is found at
+    initialisation, it is MOVED to the archive directory (default
+    ``results_archive/``, next to the results file) under the name
+    ``results_<timestamp>.json`` before the new run starts appending.
+    Each run therefore writes a fresh file, so the R scripts (which
+    keep the most recent entry per variant) can never mix two runs,
+    and no previous result is ever lost (ISO 14044 §4.5, documentation
+    of the data). Set ``archive_previous=False`` to restore the
+    append-to-existing-file behaviour.
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(
+        self, path: str, archive_previous: bool = True
+    ) -> None:
         self.path = path
         self._entries: List[Dict[str, Any]] = []
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                doc = json.load(f)
-            self._entries = doc.get("simulations", [])
+            if archive_previous:
+                self._archive(path)
+            else:
+                with open(path, "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+                self._entries = doc.get("simulations", [])
+
+    @staticmethod
+    def _archive(path: str) -> str:
+        """Move an existing results file to the archive directory.
+
+        The archive directory is ``results_archive`` created next to
+        the results file; the archived copy is named
+        ``<stem>_<YYYYMMDD_HHMMSS>.json`` so successive runs never
+        overwrite each other. Returns the archived path.
+        """
+        directory = os.path.dirname(os.path.abspath(path))
+        stem = os.path.splitext(os.path.basename(path))[0]
+        archive_dir = os.path.join(directory, "results_archive")
+        os.makedirs(archive_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        archived = os.path.join(archive_dir, f"{stem}_{stamp}.json")
+        os.replace(path, archived)
+        return archived
 
     def append(self, entry: Dict[str, Any]) -> None:
         """Append an entry (one simulation) to the in-memory store."""

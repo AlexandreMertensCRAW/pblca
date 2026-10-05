@@ -70,11 +70,28 @@ pdoc pblca -o docs_html          # HTML
 pdoc pblca                       # serve le HTML localement
 ```
 
+## Cycle de vie de `results.json`
+
+Chaque exécution démarre sur un fichier vierge : un éventuel
+`results.json` précédent est automatiquement déplacé vers
+`results_archive/results_<horodatage>.json` (aucune perte de
+résultats, ISO 14044 §4.5 — les figures R ne peuvent donc jamais
+mixer deux exécutions). Le répertoire `results_archive/` est ignoré
+par git, comme `results.json`. Pour retrouver le comportement
+d'accumulation d'autrefois : `DataStore(path, archive_previous=False)`.
+
 ## Tests
 
 ```bash
 pytest -q
 ```
+
+`tests/test_r_contract.py` verrouille le contrat Python → R : les
+clés JSON réellement consommées par les scripts `R/plot_*.R`
+(`uncertainty.enteric_ch4_per_group_kg`, `..._per_group_g_day`,
+`manure_ch4_by_system_kg`, `enteric_ch4_samples`,
+`model_selection.<slot>.variant`, convention `sim_id`, appariement
+des échantillons) sont garanties présentes avec la structure attendue.
 
 ## Cas d'étude
 
