@@ -126,6 +126,8 @@ class FarmSpec:
             (e.g. {"pasture": 0.45, "solid_storage": 0.55}).
         manure_exported: share of stored manure exported off-farm.
         avg_temp: mean annual temperature (°C) — MCF of manure systems.
+        mature_weight: mature liveweight of the animals (kg, IPCC
+            Eq. 10.6 MW); breed-dependent.
     """
 
     farm_id: str
@@ -136,6 +138,7 @@ class FarmSpec:
     manure_split: Dict[str, float]
     manure_exported: float = 0.0
     avg_temp: float = 10.0
+    mature_weight: float = 700.0
 
 
 def _parcel(spec: ParcelSpec, values: Dict[str, float]) -> LandParcel:
@@ -250,4 +253,5 @@ def build_farm(
         manure_split=dict(spec.manure_split),
         manure_exported=spec.manure_exported,
         avg_temp=spec.avg_temp,
+        mature_weight=spec.mature_weight,
     )

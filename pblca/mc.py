@@ -6,9 +6,11 @@ Single owner of the Monte-Carlo invariants:
   parameter, shared by every farm and every process using it
   (cross-occurrence consistency — explicit requirement);
 * the measured rations and measured CH4 values are perturbed from a
-  snapshot and fully restored after the loop (idempotence);
-* the parcel state (``n_organic_spread``, mutated by the manure
-  redistribution of ``LCAEngine.run``) is restored at each iteration.
+  snapshot and fully restored after the loop (idempotence).
+
+``LCAEngine.run`` works on deep copies of the farms: the parcel state
+(the manure redistribution) is never visible outside a run, so no
+parcel save/restore is needed here.
 
 The models of ``pblca/processes`` remain pure evaluators: they read
 the drawn values through ``ModelContext`` and never sample anything
@@ -182,19 +184,6 @@ def run_monte_carlo(
     farms = list(farms)
     rng = np.random.default_rng(seed)
 
-    # Snapshot BEFORE any run: run() mutates n_organic_spread
-    # (manure redistribution); the snapshot must capture the
-    # original state to restore the parcels at each iteration.
-    base_organic = {
-        (f.farm_id, p.key): p.n_organic_spread
-        for f in farms for p in f.parcels
-    }
-
-    def restore_parcels() -> None:
-        for f in farms:
-            for p in f.parcels:
-                p.n_organic_spread = base_organic[(f.farm_id, p.key)]
-
     ration_state = _ration_snapshot(farms)
     has_measures = any(
         (dmi is not None or ge is not None)
@@ -213,7 +202,6 @@ def run_monte_carlo(
         record=False,
     )
     summary = engine.registry.selection_summary(central.model_selection)
-    restore_parcels()
 
     impact_samples: Dict[str, List[float]] = {k: [] for k in central.impacts}
     gas_samples: Dict[str, List[float]] = {g: [] for g in GASES}
@@ -246,7 +234,6 @@ def run_monte_carlo(
     iteration_outputs: List[Dict[str, Any]] = []
     for _ in range(n_iterations):
         drawn = engine.params.draw(rng)
-        restore_parcels()
         if has_measures:
             _perturb_measured_rations(ration_state, rng)
         try:
@@ -285,7 +272,6 @@ def run_monte_carlo(
                 system_ch4_samples[key].append(ch4_sys)
         if return_traces:
             iteration_outputs.append(it.model_outputs)
-    restore_parcels()
     _set_ration_mode(ration_state, "measured")
 
     stats = {k: _stats(v) for k, v in impact_samples.items()}
@@ -418,15 +404,6 @@ def run_ration_comparison(
         )
 
     rng = np.random.default_rng(seed)
-    base_organic = {
-        (f.farm_id, p.key): p.n_organic_spread
-        for f in farms for p in f.parcels
-    }
-
-    def restore_parcels() -> None:
-        for f in farms:
-            for p in f.parcels:
-                p.n_organic_spread = base_organic[(f.farm_id, p.key)]
 
     modes = ("ipcc_equations", "measured")
     # Map the context ration mode to the switch function argument.
@@ -464,7 +441,6 @@ def run_ration_comparison(
 
     for mode in modes:
         _set_ration_mode(ration_state, mode_switch[mode])
-        restore_parcels()
         run = engine.run(
             farms,
             model_selection=selection_by_mode[mode],
@@ -501,7 +477,6 @@ def run_ration_comparison(
             _set_ration_mode(ration_state, mode_switch[mode])
             if mode == "measured":
                 _perturb_measured_rations(ration_state, rng)
-            restore_parcels()
             try:
                 it = engine.run(
                     farms,
@@ -531,7 +506,6 @@ def run_ration_comparison(
 
     # Restore the original ration definition (idempotence).
     _set_ration_mode(ration_state, "measured")
-    restore_parcels()
 
     # Trim the samples to complete (paired) iterations only: an
     # iteration with a failed mode contributes to neither side.

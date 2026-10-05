@@ -219,6 +219,9 @@ class FarmContext:
             (e.g. {"solid_storage": 0.55, "pasture": 0.45}).
         manure_exported: share of stored manure exported off-farm.
         avg_temp: mean annual temperature (°C) — MCF.
+        mature_weight: mature liveweight of the animals (kg) used by
+            the IPCC energy chain (Eq. 10.6, MW of the NEg equation);
+            breed-dependent, declared per farm.
     """
 
     farm_id: str
@@ -228,6 +231,7 @@ class FarmContext:
     manure_split: Dict[str, float]
     manure_exported: float = 0.0
     avg_temp: float = 10.0
+    mature_weight: float = 700.0
 
 
 @dataclass

@@ -24,6 +24,7 @@ change of signature or behaviour.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -236,9 +237,12 @@ class LCAEngine:
         """
         if isinstance(farms, FarmContext):
             farms = [farms]
-        farms = list(farms)
         if not farms:
             raise ValueError("No farm provided")
+        # Work on copies: run() never mutates the caller's objects
+        # (the manure redistribution mutates the parcels in place).
+        # The FarmContext objects are reusable across simulations.
+        farms = [copy.deepcopy(f) for f in farms]
 
         model_selection = dict(model_selection or {})
         for slot in _PRE_MANURE_SLOTS + _POST_MANURE_SLOTS:
@@ -252,65 +256,54 @@ class LCAEngine:
         farm_ids: List[str] = []
         model_outputs: Dict[str, Dict[str, Any]] = {}
 
-        # Save parcel state: run() must be idempotent (manure
-        # redistribution mutates n_organic_spread in place).
-        organic_state = [
-            (p, p.n_organic_spread) for f in farms for p in f.parcels
-        ]
-        try:
-            for farm in farms:
-                farm_ids.append(farm.farm_id)
-                ctx = ModelContext(farm, self.params, values, diagnostics)
-                n_organic = 0.0
-                # Phase 1: enteric + manure (produces the spread nitrogen).
-                for slot in _PRE_MANURE_SLOTS:
-                    spec = self.registry.get(slot, model_selection[slot])
-                    result = spec.func(ctx)
-                    model_outputs[slot] = {
-                        "variant": spec.variant,
-                        "trace": result.trace,
-                        "fluxes": result.fluxes,
-                    }
-                    source, gas = SLOT_SOURCE_GAS[slot]
-                    amount = getattr(result, f"{gas.lower()}_kg")
+        for farm in farms:
+            farm_ids.append(farm.farm_id)
+            ctx = ModelContext(farm, self.params, values, diagnostics)
+            n_organic = 0.0
+            # Phase 1: enteric + manure (produces the spread nitrogen).
+            for slot in _PRE_MANURE_SLOTS:
+                spec = self.registry.get(slot, model_selection[slot])
+                result = spec.func(ctx)
+                model_outputs[slot] = {
+                    "variant": spec.variant,
+                    "trace": result.trace,
+                    "fluxes": result.fluxes,
+                }
+                source, gas = SLOT_SOURCE_GAS[slot]
+                amount = getattr(result, f"{gas.lower()}_kg")
+                ledger.add(
+                    gas, amount, source, farm.farm_id,
+                    spec.variant, spec.reference, detail=f"slot={slot}",
+                )
+                if slot == "manure_n2o":
+                    n_organic = result.fluxes.get("n_organic_available", 0.0)
+            # Redistribution of organic nitrogen to the parcels.
+            # Pasture deposits are fully handled by the manure module
+            # (EF3PRP + indirect): no transfer to the soil module,
+            # to avoid double counting.
+            if n_organic > 0:
+                _distribute_manure_n(farm, n_organic)
+            # Phase 2: soil (N2O, carbon) + purchases + fieldwork.
+            for slot in _POST_MANURE_SLOTS:
+                spec = self.registry.get(slot, model_selection[slot])
+                result = spec.func(ctx)
+                model_outputs[slot] = {
+                    "variant": spec.variant,
+                    "trace": result.trace,
+                    "fluxes": result.fluxes,
+                }
+                source, gas = SLOT_SOURCE_GAS[slot]
+                amount = result.co2_kg if gas == "CO2" else result.n2o_kg
+                if slot == "soil_carbon" and amount < 0:
+                    ledger.add_sink(
+                        amount, source, farm.farm_id,
+                        spec.variant, spec.reference, detail=f"slot={slot}",
+                    )
+                else:
                     ledger.add(
                         gas, amount, source, farm.farm_id,
                         spec.variant, spec.reference, detail=f"slot={slot}",
                     )
-                    if slot == "manure_n2o":
-                        n_organic = result.fluxes.get("n_organic_available", 0.0)
-                # Redistribution of organic nitrogen to the parcels.
-                # Pasture deposits are fully handled by the manure module
-                # (EF3PRP + indirect): no transfer to the soil module,
-                # to avoid double counting.
-                if n_organic > 0:
-                    _distribute_manure_n(farm, n_organic)
-                # Phase 2: soil (N2O, carbon) + purchases + fieldwork.
-                for slot in _POST_MANURE_SLOTS:
-                    spec = self.registry.get(slot, model_selection[slot])
-                    result = spec.func(ctx)
-                    model_outputs[slot] = {
-                        "variant": spec.variant,
-                        "trace": result.trace,
-                        "fluxes": result.fluxes,
-                    }
-                    source, gas = SLOT_SOURCE_GAS[slot]
-                    amount = result.co2_kg if gas == "CO2" else result.n2o_kg
-                    if slot == "soil_carbon" and amount < 0:
-                        ledger.add_sink(
-                            amount, source, farm.farm_id,
-                            spec.variant, spec.reference, detail=f"slot={slot}",
-                        )
-                    else:
-                        ledger.add(
-                            gas, amount, source, farm.farm_id,
-                            spec.variant, spec.reference, detail=f"slot={slot}",
-                        )
-        finally:
-            # Restoration: FarmContext objects remain reusable across
-            # simulations (idempotence of run()).
-            for parcel, base in organic_state:
-                parcel.n_organic_spread = base
 
         impacts = characterize(
             ledger,

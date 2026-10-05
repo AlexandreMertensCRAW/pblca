@@ -278,7 +278,7 @@ def _energy_chain(
     nea = v("ca_activity_grazing") * nem * g.grazing
     # Eq. 10.6: NEg = 22.02 * (BW/(C*MW))^0.75 * WG^1.097; C = 1 (castrated males)
     # MW: mature weight (here set by the context, default 700 kg beef crossbreed)
-    mw = ctx.farm.__dict__.get("mature_weight", 700.0)
+    mw = ctx.farm.mature_weight
     neg = 0.0
     if wg_day > 0:
         neg = 22.02 * (bw_avg / mw) ** 0.75 * wg_day ** 1.097
