@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from .engine import LCAEngine
+from .farm_spec import FarmSpec, build_farm
 from .params import ParameterSet
 from .registry import FarmContext, ModelRegistry
 
@@ -132,8 +133,13 @@ class CaseStudyConfig:
 
     Attributes:
         name: short name (used in the JSON sim_id prefixes).
-        farm_builder: callable (params) -> FarmContext (or a callable
-            without arguments); builds the farm of the case study.
+        farm: declarative farm specification (FarmSpec, values only)
+            built by the generic pblca.farm_spec.build_farm; the
+            recommended way to describe a farm.
+        farm_builder: legacy alternative to ``farm``: callable
+            (params) -> FarmContext (or a callable without arguments)
+            building the farm of the case study. Exactly one of
+            ``farm`` / ``farm_builder`` must be provided.
         measurements: on-farm measurements applied to the animal
             groups before any simulation (optional).
         variant_grid: variants to sweep per slot, e.g.
@@ -147,7 +153,8 @@ class CaseStudyConfig:
     """
 
     name: str
-    farm_builder: Callable[..., FarmContext]
+    farm: Optional[FarmSpec] = None
+    farm_builder: Optional[Callable[..., FarmContext]] = None
     measurements: Optional[GroupMeasurements] = None
     variant_grid: Optional[Dict[str, List[str]]] = None
     named_combinations: Optional[Dict[str, Dict[str, str]]] = None
@@ -205,6 +212,29 @@ def _sim_id(name: str, selection: Dict[str, str]) -> str:
     return f"grid_{name}_{parts}" if name else f"grid_{parts}"
 
 
+def _build_farms(
+    config: "CaseStudyConfig", params: ParameterSet
+) -> Union[FarmContext, Sequence[FarmContext]]:
+    """Build the farm(s) of a case-study configuration.
+
+    Exactly one of ``config.farm`` (declarative FarmSpec) and
+    ``config.farm_builder`` (legacy callable) must be provided.
+    """
+    if config.farm is not None and config.farm_builder is not None:
+        raise ValueError(
+            "CaseStudyConfig: provide either 'farm' (FarmSpec) or "
+            "'farm_builder' (callable), not both"
+        )
+    if config.farm is not None:
+        return build_farm(config.farm, params)
+    if config.farm_builder is None:
+        raise ValueError(
+            "CaseStudyConfig: one of 'farm' (FarmSpec) or 'farm_builder' "
+            "is required"
+        )
+    return config.farm_builder(params)
+
+
 def run_scenario_grid(
     engine: LCAEngine,
     config: CaseStudyConfig,
@@ -230,7 +260,7 @@ def run_scenario_grid(
         the list of scenario records (including the excluded ones,
         for reporting).
     """
-    farms = config.farm_builder(engine.params)
+    farms = _build_farms(config, engine.params)
     if isinstance(farms, FarmContext):
         farms = [farms]
     if config.measurements is not None:
@@ -308,7 +338,7 @@ def run_case_study(
     Returns:
         a summary dict (grid records, Monte-Carlo summaries).
     """
-    farms = config.farm_builder(engine.params)
+    farms = _build_farms(config, engine.params)
     if isinstance(farms, FarmContext):
         farms = [farms]
     if config.measurements is not None:
