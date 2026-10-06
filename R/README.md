@@ -26,6 +26,26 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   values and p5–p95 whiskers per variant.
   Output: `R/fig_ch4_par_modele.png`.
 
+- `analyse_enteric_sensitivity.R` — reads the paired enteric-variant
+  grid entry (`sim_id = "mc_<case>_enteric_paired"`, written by step 4
+  of `run_case_study.py`: one Monte-Carlo parameter draw per iteration,
+  shared by every enteric variant of the grid) and:
+  - exports the emissions table (one row per iteration, one column per
+    variant, farm-total enteric CH4 in kg/yr) and the parameter-draws
+    table (the drawn value of every parameter per iteration) as CSV;
+  - computes the Pearson and Spearman correlations between every
+    parameter and the emissions of every variant (long-form CSV,
+    sorted by |Spearman|);
+  - plots the heatmap of the Spearman correlations (parameters x
+    variants): the parameters with the strongest influence on each
+    model, i.e. which "error" drives each result.
+  ```bash
+  Rscript R/analyse_enteric_sensitivity.R results.json [output_dir]
+  ```
+  Output: `enteric_paired_emissions.csv`,
+  `enteric_paired_parameter_draws.csv`,
+  `enteric_paired_correlation.csv`,
+  `fig_correlation_parametres_ch4.png` (in `R/` by default).
 - `plot_manure_ch4_by_model.R` — reads all the Monte-Carlo entries
   carrying per-system manure CH4 statistics (one per `manure_ch4`
   variant, `sim_id = "mc_<case>_manure_ch4_<variant>"`) and plots

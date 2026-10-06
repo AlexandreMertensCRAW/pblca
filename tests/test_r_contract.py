@@ -197,6 +197,51 @@ class TestRationComparisonContract:
         assert n_ipcc == n_meas, "unpaired ration-comparison samples"
 
 
+class TestPairedEntericGridContract:
+    """Keys read by analyse_enteric_sensitivity.R."""
+
+    # uncertainty$emissions_table: one row per iteration, carrying
+    # "iteration" and one column per evaluated variant; every row has
+    # the SAME set of keys (rectangular table, paired columns).
+    def test_paired_grid_entry(self, results):
+        entries = [
+            e for e in results["simulations"]
+            if "uncertainty" in e
+            and "emissions_table" in e["uncertainty"]
+        ]
+        assert entries, "no paired-enteric-grid entry in results.json"
+        entry = entries[-1]
+        u = entry["uncertainty"]
+        variants = u["variants"]
+        assert isinstance(variants, list) and len(variants) >= 1
+        assert len(u["emissions_table"]) == len(u["parameter_draws_table"])
+        assert len(u["emissions_table"]) > 0
+        expected_keys = {"iteration", *variants}
+        for row in u["emissions_table"]:
+            assert set(row) == expected_keys, "unpaired emissions row"
+        # parameter_draws_table: same iterations, every pid present.
+        for row in u["parameter_draws_table"]:
+            assert "iteration" in row
+        iterations_e = [r["iteration"] for r in u["emissions_table"]]
+        iterations_p = [r["iteration"] for r in u["parameter_draws_table"]]
+        assert iterations_e == iterations_p, "tables not paired"
+        # sim_id written by run_case_study (step 4).
+        assert entry["sim_id"] == "mc_contract_enteric_paired"
+
+    def test_paired_grid_stats(self, results):
+        entries = [
+            e for e in results["simulations"]
+            if "uncertainty" in e
+            and "enteric_ch4_stats" in e["uncertainty"]
+        ]
+        assert entries
+        u = entries[-1]["uncertainty"]
+        for variant in u["variants"]:
+            stats = u["enteric_ch4_stats"][variant]
+            for key in ("mean", "sd", "p5", "p50", "p95", "n"):
+                assert key in stats
+
+
 class TestDataStoreArchive:
     """Lifecycle: a previous results file is archived, not deleted."""
 
