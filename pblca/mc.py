@@ -598,6 +598,7 @@ def run_paired_variant_grid(
     seed: Optional[int] = None,
     record: bool = True,
     sim_id: str = "paired_enteric_grid",
+    main_variant: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Paired Monte-Carlo evaluation of enteric-CH4 model variants.
 
@@ -620,6 +621,13 @@ def run_paired_variant_grid(
     ``variants``. Variants not runnable on the farms (missing
     required group fields) are excluded upfront, with the reason.
 
+    One variant is the ``main_variant`` (default: the first runnable
+    one) and the others are alternatives: each alternative is also
+    reported as a PAIRED DIFFERENCE against the main variant, per
+    indicator. Because the two evaluations of an iteration share the
+    same draw, this difference isolates the pure effect of the model
+    choice on the farm result (parameters, gases, impacts).
+
     Args:
         engine: the LCA engine (runs, records).
         farms: one farm or a list of farms.
@@ -630,15 +638,23 @@ def run_paired_variant_grid(
         record: if True, records a summary entry in the datastore.
         sim_id: identifier of the recorded entry (use distinct ids
             when running several paired grids).
+        main_variant: the reference variant of the paired differences
+            (default: the first runnable variant). It must belong to
+            the runnable subset of ``variants``.
 
     Returns:
         a dictionary with, under ``emissions_table``, one row per
-        iteration ``{"iteration": i, "<variant>": ch4_kg, ...}``
-        (enteric CH4, farm total, kg/yr) and, under
+        iteration ``{"iteration": i, "<variant>__<indicator>": value,
+        ...}`` (flat columns: the whole-farm indicators of each
+        variant; indicators = the impacts gwp100/gwp20/gwpstar and
+        the gas totals ch4_kg/n2o_kg/co2_kg) and, under
         ``parameter_draws_table``, one row per iteration
         ``{"iteration": i, "<pid>": value, ...}`` (the drawn parameter
-        values — full traceability). Per-variant descriptive
-        statistics are returned under ``enteric_ch4_stats``.
+        values — full traceability). Per indicator and variant, the
+        descriptive statistics are returned under
+        ``farm_indicators_stats`` and the paired difference against
+        the main variant under ``paired_differences_stats`` (absent
+        for the main variant itself).
     """
     from .scenarios import _variant_is_runnable
 
@@ -661,6 +677,12 @@ def run_paired_variant_grid(
         raise ValueError(
             "no runnable enteric variant among: " + ", ".join(variants)
         )
+    main_variant = main_variant if main_variant is not None else runnable[0]
+    if main_variant not in runnable:
+        raise ValueError(
+            f"main_variant '{main_variant}' is not among the runnable "
+            f"variants: {', '.join(runnable)}"
+        )
     rng = np.random.default_rng(seed)
     ration_state = _ration_snapshot(farms)
     has_measures = any(
@@ -670,16 +692,29 @@ def run_paired_variant_grid(
     )
     base_selection = dict(model_selection or {})
     central_values = engine.params.central_values()
-    # Central run (reference values, first runnable variant): only
-    # used for the summary of the non-enteric slots.
+    # Central run (reference values, main variant): only used for
+    # the summary of the non-enteric slots.
     central = engine.run(
         farms,
-        model_selection={**base_selection, "enteric_ch4": runnable[0]},
+        model_selection={**base_selection, "enteric_ch4": main_variant},
         values=central_values,
         sim_id=sim_id,
         record=False,
     )
     summary = engine.registry.selection_summary(central.model_selection)
+    # Flat farm-level indicator columns: the impacts of the whole
+    # farm (gwp100, gwp20, gwpstar) and the gas totals of the ledger,
+    # for EVERY variant -> "<variant>__<indicator>".
+    indicator_names = sorted(central.impacts)
+    gas_names = [g.lower() + "_kg" for g in GASES]
+    indicators = [*indicator_names, *gas_names]
+
+    def _farm_indicators(sim) -> Dict[str, float]:
+        out_i: Dict[str, float] = {k: float(v) for k, v in sim.impacts.items()}
+        for gas in GASES:
+            out_i[gas.lower() + "_kg"] = float(sim.ledger.total(gas))
+        return out_i
+
     emissions_table: List[Dict[str, Any]] = []
     parameter_draws_table: List[Dict[str, Any]] = []
     failed: Dict[str, int] = {v: 0 for v in runnable}
@@ -702,29 +737,47 @@ def run_paired_variant_grid(
                 failed[variant] += 1
                 row_ok = False
                 break
-            enteric_total = it.ledger.total_by_source().get("enteric", {})
-            row_emissions[variant] = float(enteric_total.get("CH4", 0.0))
+            values_i = _farm_indicators(it)
+            for k in indicators:
+                row_emissions[f"{variant}__{k}"] = values_i[k]
         _set_ration_mode(ration_state, "measured")
         if not row_ok:
             continue
         row_params.update(drawn)
         emissions_table.append(row_emissions)
         parameter_draws_table.append(row_params)
-    variant_stats = {
-        variant: _stats([row[variant] for row in emissions_table])
-        for variant in runnable
-    }
+    # Per-variant statistics of every farm indicator + the paired
+    # difference against the main variant (the pure model-choice
+    # effect: same draw, same iteration).
+    farm_indicators_stats: Dict[str, Dict[str, Any]] = {}
+    paired_differences_stats: Dict[str, Dict[str, Any]] = {}
+    for k in indicators:
+        main_col = [row[f"{main_variant}__{k}"] for row in emissions_table]
+        farm_indicators_stats[k] = {
+            variant: _stats([row[f"{variant}__{k}"] for row in emissions_table])
+            for variant in runnable
+        }
+        for variant in runnable:
+            if variant == main_variant:
+                continue
+            alt_col = [row[f"{variant}__{k}"] for row in emissions_table]
+            paired_differences_stats[f"{variant}"] = {
+                **paired_differences_stats.get(f"{variant}", {}),
+                k: _stats([a - m for a, m in zip(alt_col, main_col)]),
+            }
     out: Dict[str, Any] = {
         "sim_id": sim_id,
         "method": "paired Monte-Carlo",
         "slot": "enteric_ch4",
         "variants": runnable,
+        "main_variant": main_variant,
         "excluded_variants": exclusions,
         "n_iterations": n_iterations,
         "seed": seed,
         "failed_iterations": failed,
         "model_selection": summary,
-        "enteric_ch4_stats": variant_stats,
+        "farm_indicators_stats": farm_indicators_stats,
+        "paired_differences_stats": paired_differences_stats,
         "emissions_table": emissions_table,
         "parameter_draws_table": parameter_draws_table,
     }

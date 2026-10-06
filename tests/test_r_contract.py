@@ -213,10 +213,17 @@ class TestPairedEntericGridContract:
         entry = entries[-1]
         u = entry["uncertainty"]
         variants = u["variants"]
+        main = u["main_variant"]
+        assert main in variants
         assert isinstance(variants, list) and len(variants) >= 1
         assert len(u["emissions_table"]) == len(u["parameter_draws_table"])
         assert len(u["emissions_table"]) > 0
-        expected_keys = {"iteration", *variants}
+        indicators = ("gwp100", "gwp20", "gwpstar",
+                      "ch4_kg", "co2_kg", "n2o_kg")
+        expected_keys = {"iteration"}
+        for v in variants:
+            for k in indicators:
+                expected_keys.add(f"{v}__{k}")
         for row in u["emissions_table"]:
             assert set(row) == expected_keys, "unpaired emissions row"
         # parameter_draws_table: same iterations, every pid present.
@@ -232,14 +239,27 @@ class TestPairedEntericGridContract:
         entries = [
             e for e in results["simulations"]
             if "uncertainty" in e
-            and "enteric_ch4_stats" in e["uncertainty"]
+            and "farm_indicators_stats" in e["uncertainty"]
         ]
         assert entries
         u = entries[-1]["uncertainty"]
-        for variant in u["variants"]:
-            stats = u["enteric_ch4_stats"][variant]
-            for key in ("mean", "sd", "p5", "p50", "p95", "n"):
-                assert key in stats
+        variants = u["variants"]
+        main = u["main_variant"]
+        for k in ("gwp100", "gwp20", "gwpstar",
+                  "ch4_kg", "co2_kg", "n2o_kg"):
+            for v in variants:
+                stats = u["farm_indicators_stats"][k][v]
+                for key in ("mean", "sd", "p5", "p50", "p95", "n"):
+                    assert key in stats
+        # Paired differences: alternatives only, every indicator.
+        alts = [v for v in variants if v != main]
+        assert set(u["paired_differences_stats"]) == set(alts)
+        for alt in alts:
+            for k in ("gwp100", "gwp20", "gwpstar",
+                      "ch4_kg", "co2_kg", "n2o_kg"):
+                stats = u["paired_differences_stats"][alt][k]
+                for key in ("mean", "sd", "p5", "p50", "p95", "n"):
+                    assert key in stats
 
 
 class TestDataStoreArchive:

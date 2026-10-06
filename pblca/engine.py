@@ -461,6 +461,7 @@ class LCAEngine:
         seed: Optional[int] = None,
         record: bool = True,
         sim_id: str = "paired_enteric_grid",
+        main_variant: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Paired evaluation of the enteric-CH4 variants
         (delegates to :func:`pblca.mc.run_paired_variant_grid`).
@@ -479,7 +480,8 @@ class LCAEngine:
             seed: random seed (reproducibility).
             record: if True, records a summary entry in the datastore.
             sim_id: identifier of the recorded entry.
-
+            main_variant: the reference variant of the paired
+                differences (default: the first runnable variant).
         Returns:
             a dictionary with ``emissions_table`` (one row per
             iteration: the farm-total enteric CH4 of each variant) and
@@ -496,4 +498,5 @@ class LCAEngine:
             seed=seed,
             record=record,
             sim_id=sim_id,
+            main_variant=main_variant,
         )

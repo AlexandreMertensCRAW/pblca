@@ -150,6 +150,10 @@ class CaseStudyConfig:
             ``{"inra_tier3": {"enteric_ch4": "tier3_sauvant2011",
             "manure_ch4": "tier3_eugene2019"}}``.
         mc: Monte-Carlo options (None = no Monte-Carlo).
+        main_enteric_variant: reference variant of the paired
+            enteric-variant grid (step 4 of ``run_case_study``): the
+            alternatives are reported as paired differences against
+            it. Default: the first enteric variant of the grid.
     """
 
     name: str
@@ -159,6 +163,7 @@ class CaseStudyConfig:
     variant_grid: Optional[Dict[str, List[str]]] = None
     named_combinations: Optional[Dict[str, Dict[str, str]]] = None
     mc: Optional[NumericalOptions] = None
+    main_enteric_variant: Optional[str] = None
 
 
 @dataclass
@@ -413,12 +418,17 @@ def run_case_study(
                 seed=mc_options.seed if mc_options else 2024,
                 record=record,
                 sim_id=f"mc_{config.name}_enteric_paired",
+                main_variant=config.main_enteric_variant,
             )
             out["paired_enteric_grid"] = {
                 "variants": paired["variants"],
+                "main_variant": paired["main_variant"],
                 "excluded_variants": paired["excluded_variants"],
                 "failed_iterations": paired["failed_iterations"],
-                "enteric_ch4_stats": paired["enteric_ch4_stats"],
+                "farm_indicators_stats": paired["farm_indicators_stats"],
+                "paired_differences_stats": (
+                    paired["paired_differences_stats"]
+                ),
                 "n_rows": len(paired["emissions_table"]),
             }
         except ValueError as exc:
