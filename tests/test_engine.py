@@ -1537,8 +1537,9 @@ class TestPairedVariantGrid:
         assert "tier3_sauvant2011_modelled_ingestion" in out["excluded_variants"]
 
     def test_paired_columns_and_draws(self, engine, farm):
-        """Every row of the emissions table carries one column per
-        variant and the drawn parameter values of that iteration."""
+        """Every row of the emissions table carries one flat
+        ``<variant>__<indicator>`` column per farm indicator of every
+        variant, and the drawn parameter values of that iteration."""
         for a in farm.animals:
             a.dmi_measured = 7.0
             a.ge_measured = 7.0 * 18.45
@@ -1551,19 +1552,65 @@ class TestPairedVariantGrid:
             farm, variants=variants, n_iterations=15, seed=7, record=False
         )
         assert out["variants"] == variants
+        assert out["main_variant"] == variants[0]
         assert len(out["emissions_table"]) == 15
         assert len(out["parameter_draws_table"]) == 15
+        indicators = ("gwp100", "gwp20", "gwpstar",
+                      "ch4_kg", "co2_kg", "n2o_kg")
+        expected = {"iteration"}
+        for v in variants:
+            for k in indicators:
+                expected.add(f"{v}__{k}")
         n_params = len(engine.params)
         for row, draws in zip(out["emissions_table"],
                               out["parameter_draws_table"]):
             assert row["iteration"] == draws["iteration"]
-            assert set(row) == {"iteration", *variants}
+            assert set(row) == expected
             assert len(draws) == n_params + 1  # + iteration
+        # Per-indicator statistics of every variant.
+        for k in indicators:
             for v in variants:
-                assert row[v] > 0
-        # Paired farm-total statistics per variant.
-        for v in variants:
-            assert out["enteric_ch4_stats"][v]["n"] == 15
+                assert out["farm_indicators_stats"][k][v]["n"] == 15
+
+    def test_main_variant_and_paired_differences(self, engine, farm):
+        """The alternatives are reported as paired differences
+        against the main variant: same draw, same iteration, so the
+        difference isolates the pure model-choice effect."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        main = "tier2_2006_modelled_ingestion"
+        alts = ["tier2_2006_ingestion_measured",
+                "tier3_mills_modelled_ingestion"]
+        out = engine.run_paired_variant_grid(
+            farm, variants=[main, *alts], n_iterations=15, seed=7,
+            record=False, main_variant=main,
+        )
+        assert out["main_variant"] == main
+        # Paired differences exist for the alternatives only.
+        assert set(out["paired_differences_stats"]) == set(alts)
+        for alt in alts:
+            stats = out["paired_differences_stats"][alt]
+            for k in ("gwp100", "gwp20", "gwpstar",
+                      "ch4_kg", "co2_kg", "n2o_kg"):
+                assert stats[k]["n"] == 15
+        # The mean paired difference equals the difference of the
+        # means (linearity), computed from the flat table itself.
+        for k in ("gwp100", "ch4_kg"):
+            main_col = [r[f"{main}__{k}"] for r in out["emissions_table"]]
+            for alt in alts:
+                alt_col = [r[f"{alt}__{k}"] for r in out["emissions_table"]]
+                diff = [a - m for a, m in zip(alt_col, main_col)]
+                mx = sum(diff) / len(diff)
+                assert out["paired_differences_stats"][alt][k]["mean"] == (
+                    pytest.approx(mx)
+                )
+        # A wrong main variant is rejected.
+        with pytest.raises(ValueError):
+            engine.run_paired_variant_grid(
+                farm, variants=alts, n_iterations=3,
+                record=False, main_variant="unknown_variant",
+            )
 
     def test_reproducible(self, engine, farm):
         for a in farm.animals:
@@ -1613,8 +1660,10 @@ class TestPairedVariantGrid:
             seed=9,
             record=False,
         )
-        x = [r["tier2_2006_modelled_ingestion"] for r in out["emissions_table"]]
-        y = [r["tier2_2006_ingestion_measured"] for r in out["emissions_table"]]
+        x = [r["tier2_2006_modelled_ingestion__ch4_kg"]
+             for r in out["emissions_table"]]
+        y = [r["tier2_2006_ingestion_measured__ch4_kg"]
+             for r in out["emissions_table"]]
         mx, my = sum(x) / len(x), sum(y) / len(y)
         cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
         assert cov > 0
@@ -1645,4 +1694,7 @@ class TestPairedVariantGrid:
         assert u["emissions_table"] == out["emissions_table"]
         assert u["parameter_draws_table"] == out["parameter_draws_table"]
         assert u["variants"] == out["variants"]
-        assert u["enteric_ch4_stats"] == out["enteric_ch4_stats"]
+        assert u["main_variant"] == out["main_variant"]
+        assert u["farm_indicators_stats"] == out["farm_indicators_stats"]
+        assert (u["paired_differences_stats"]
+                == out["paired_differences_stats"])

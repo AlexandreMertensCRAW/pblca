@@ -30,22 +30,29 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   grid entry (`sim_id = "mc_<case>_enteric_paired"`, written by step 4
   of `run_case_study.py`: one Monte-Carlo parameter draw per iteration,
   shared by every enteric variant of the grid) and:
-  - exports the emissions table (one row per iteration, one column per
-    variant, farm-total enteric CH4 in kg/yr) and the parameter-draws
-    table (the drawn value of every parameter per iteration) as CSV;
+  - exports the emissions table (one row per iteration, one flat
+    `<variant>__<indicator>` column per farm indicator of every
+    variant: gwp100, gwp20, gwpstar, ch4_kg, co2_kg, n2o_kg) and the
+    parameter-draws table (the drawn value of every parameter per
+    iteration) as CSV;
   - computes the Pearson and Spearman correlations between every
-    parameter and the emissions of every variant (long-form CSV,
+    parameter and the GWP100 of every variant (long-form CSV,
     sorted by |Spearman|);
+  - computes the PAIRED DIFFERENCE of every alternative against the
+    main variant (`main_enteric_variant` of the case study, e.g.
+    `tier2_fao_ym_modelled_ingestion`), per indicator: the pure
+    model-choice effect on the farm result (same draws, same
+    iterations — CSV + figure);
   - plots the heatmap of the Spearman correlations (parameters x
-    variants): the parameters with the strongest influence on each
-    model, i.e. which "error" drives each result.
+    variants) and the model-effect figure on gwp100.
   ```bash
   Rscript R/analyse_enteric_sensitivity.R results.json [output_dir]
   ```
   Output: `enteric_paired_emissions.csv`,
   `enteric_paired_parameter_draws.csv`,
-  `enteric_paired_correlation.csv`,
-  `fig_correlation_parametres_ch4.png` (in `R/` by default).
+  `enteric_paired_correlation.csv`, `enteric_paired_model_effect.csv`,
+  `fig_correlation_parametres_ch4.png`,
+  `fig_effet_modeles_gwp100.png` (in `R/` by default).
 - `plot_manure_ch4_by_model.R` — reads all the Monte-Carlo entries
   carrying per-system manure CH4 statistics (one per `manure_ch4`
   variant, `sim_id = "mc_<case>_manure_ch4_<variant>"`) and plots

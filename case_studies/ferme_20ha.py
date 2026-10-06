@@ -87,4 +87,5 @@ CONFIG = CaseStudyConfig(
         },
     },
     mc=NumericalOptions(n_iterations=500, seed=2024),
+    main_enteric_variant="tier2_fao_ym_modelled_ingestion",
 )
