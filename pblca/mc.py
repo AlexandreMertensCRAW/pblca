@@ -587,3 +587,153 @@ def run_ration_comparison(
             },
         )
     return out
+
+
+def run_paired_variant_grid(
+    engine: "LCAEngine",
+    farms: Union[FarmContext, Sequence[FarmContext]],
+    variants: Sequence[str],
+    n_iterations: int = 1000,
+    model_selection: Optional[Dict[str, str]] = None,
+    seed: Optional[int] = None,
+    record: bool = True,
+    sim_id: str = "paired_enteric_grid",
+) -> Dict[str, Any]:
+    """Paired Monte-Carlo evaluation of enteric-CH4 model variants.
+
+    At each Monte-Carlo iteration, ONE parameter draw is performed and
+    every enteric variant of ``variants`` is evaluated with this same
+    draw. Because all columns of one iteration share the same
+    parameter values, the emissions table is directly comparable
+    column-wise: a row difference reflects the model structure, not
+    the sampling noise.
+
+    The measured rations are perturbed per iteration exactly as in
+    ``run_monte_carlo`` (one lognormal factor per group, applied to
+    both DMI and GE, plus one factor per measured-CH4 method): all
+    variants see the SAME perturbed measurements, so the pairing
+    holds for the ``_ingestion_measured`` and ``measured_*``
+    variants too.
+
+    Non-enteric slots keep the variants given by ``model_selection``
+    (or the registry defaults); only the ``enteric_ch4`` slot sweeps
+    ``variants``. Variants not runnable on the farms (missing
+    required group fields) are excluded upfront, with the reason.
+
+    Args:
+        engine: the LCA engine (runs, records).
+        farms: one farm or a list of farms.
+        variants: enteric-CH4 variants to evaluate (paired columns).
+        n_iterations: number of iterations (>0).
+        model_selection: variants for the other slots.
+        seed: random seed (reproducibility).
+        record: if True, records a summary entry in the datastore.
+        sim_id: identifier of the recorded entry (use distinct ids
+            when running several paired grids).
+
+    Returns:
+        a dictionary with, under ``emissions_table``, one row per
+        iteration ``{"iteration": i, "<variant>": ch4_kg, ...}``
+        (enteric CH4, farm total, kg/yr) and, under
+        ``parameter_draws_table``, one row per iteration
+        ``{"iteration": i, "<pid>": value, ...}`` (the drawn parameter
+        values — full traceability). Per-variant descriptive
+        statistics are returned under ``enteric_ch4_stats``.
+    """
+    from .scenarios import _variant_is_runnable
+
+    if isinstance(farms, FarmContext):
+        farms = [farms]
+    farms = list(farms)
+    if not variants:
+        raise ValueError("run_paired_variant_grid requires at least one variant")
+    # Exclude the variants that cannot run on these farms (missing
+    # required group fields), keeping a deterministic order.
+    runnable: List[str] = []
+    exclusions: Dict[str, str] = {}
+    for variant in variants:
+        reason = _variant_is_runnable(engine.registry, "enteric_ch4", variant, farms)
+        if reason is None:
+            runnable.append(variant)
+        else:
+            exclusions[variant] = reason
+    if not runnable:
+        raise ValueError(
+            "no runnable enteric variant among: " + ", ".join(variants)
+        )
+    rng = np.random.default_rng(seed)
+    ration_state = _ration_snapshot(farms)
+    has_measures = any(
+        (dmi is not None or ge is not None)
+        or any(v is not None and sd for _, v, sd in ch4_measures)
+        for _, dmi, ge, _, ch4_measures in ration_state
+    )
+    base_selection = dict(model_selection or {})
+    central_values = engine.params.central_values()
+    # Central run (reference values, first runnable variant): only
+    # used for the summary of the non-enteric slots.
+    central = engine.run(
+        farms,
+        model_selection={**base_selection, "enteric_ch4": runnable[0]},
+        values=central_values,
+        sim_id=sim_id,
+        record=False,
+    )
+    summary = engine.registry.selection_summary(central.model_selection)
+    emissions_table: List[Dict[str, Any]] = []
+    parameter_draws_table: List[Dict[str, Any]] = []
+    failed: Dict[str, int] = {v: 0 for v in runnable}
+    for i in range(n_iterations):
+        drawn = engine.params.draw(rng)
+        if has_measures:
+            _perturb_measured_rations(ration_state, rng)
+        row_emissions: Dict[str, Any] = {"iteration": i}
+        row_params: Dict[str, Any] = {"iteration": i}
+        row_ok = True
+        for variant in runnable:
+            try:
+                it = engine.run(
+                    farms,
+                    model_selection={**base_selection, "enteric_ch4": variant},
+                    values=drawn,
+                    record=False,
+                )
+            except Exception:
+                failed[variant] += 1
+                row_ok = False
+                break
+            enteric_total = it.ledger.total_by_source().get("enteric", {})
+            row_emissions[variant] = float(enteric_total.get("CH4", 0.0))
+        _set_ration_mode(ration_state, "measured")
+        if not row_ok:
+            continue
+        row_params.update(drawn)
+        emissions_table.append(row_emissions)
+        parameter_draws_table.append(row_params)
+    variant_stats = {
+        variant: _stats([row[variant] for row in emissions_table])
+        for variant in runnable
+    }
+    out: Dict[str, Any] = {
+        "sim_id": sim_id,
+        "method": "paired Monte-Carlo",
+        "slot": "enteric_ch4",
+        "variants": runnable,
+        "excluded_variants": exclusions,
+        "n_iterations": n_iterations,
+        "seed": seed,
+        "failed_iterations": failed,
+        "model_selection": summary,
+        "enteric_ch4_stats": variant_stats,
+        "emissions_table": emissions_table,
+        "parameter_draws_table": parameter_draws_table,
+    }
+    if record:
+        engine._record(
+            central,
+            summary,
+            central_values,
+            uncertainty={k: v for k, v in out.items()
+                         if k not in ("sim_id", "method")},
+        )
+    return out

@@ -1510,3 +1510,139 @@ class TestIngestionExplicitVariants:
         # than the modelled chain (which ignores them).
         assert groups["veaux_0_6mois"]["sd"] > 0
         assert mc["gas_totals_kg"]["CH4"]["sd"] > sd_mod
+
+
+# ----------------------------------------------------------------------
+# Paired enteric-variant grid (one draw shared by every variant)
+# ----------------------------------------------------------------------
+class TestPairedVariantGrid:
+    def test_requires_variants(self, engine, farm):
+        with pytest.raises(ValueError):
+            engine.run_paired_variant_grid(farm, variants=[], n_iterations=3)
+
+    def test_exclusion_and_stats(self, engine, farm):
+        """The variants that cannot run on the farm are excluded with
+        the reason; the runnable ones produce paired columns."""
+        out = engine.run_paired_variant_grid(
+            farm,
+            variants=[
+                "tier2_2006_modelled_ingestion",
+                "tier3_sauvant2011_modelled_ingestion",  # needs diet_om
+            ],
+            n_iterations=8,
+            seed=5,
+            record=False,
+        )
+        assert out["variants"] == ["tier2_2006_modelled_ingestion"]
+        assert "tier3_sauvant2011_modelled_ingestion" in out["excluded_variants"]
+
+    def test_paired_columns_and_draws(self, engine, farm):
+        """Every row of the emissions table carries one column per
+        variant and the drawn parameter values of that iteration."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        variants = [
+            "tier2_2006_modelled_ingestion",
+            "tier2_2006_ingestion_measured",
+            "tier3_mills_modelled_ingestion",
+        ]
+        out = engine.run_paired_variant_grid(
+            farm, variants=variants, n_iterations=15, seed=7, record=False
+        )
+        assert out["variants"] == variants
+        assert len(out["emissions_table"]) == 15
+        assert len(out["parameter_draws_table"]) == 15
+        n_params = len(engine.params)
+        for row, draws in zip(out["emissions_table"],
+                              out["parameter_draws_table"]):
+            assert row["iteration"] == draws["iteration"]
+            assert set(row) == {"iteration", *variants}
+            assert len(draws) == n_params + 1  # + iteration
+            for v in variants:
+                assert row[v] > 0
+        # Paired farm-total statistics per variant.
+        for v in variants:
+            assert out["enteric_ch4_stats"][v]["n"] == 15
+
+    def test_reproducible(self, engine, farm):
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        v = ["tier2_2006_modelled_ingestion", "tier2_2006_ingestion_measured"]
+        c1 = engine.run_paired_variant_grid(
+            farm, variants=v, n_iterations=10, seed=3, record=False
+        )
+        c2 = engine.run_paired_variant_grid(
+            farm, variants=v, n_iterations=10, seed=3, record=False
+        )
+        assert c1["emissions_table"] == c2["emissions_table"]
+        assert c1["parameter_draws_table"] == c2["parameter_draws_table"]
+
+    def test_idempotent_measures_restored(self, engine, farm):
+        """The measured rations are perturbed during the grid and fully
+        restored afterwards (same invariant as run_monte_carlo)."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+            a.ration_rel_sd = 0.10
+        engine.run_paired_variant_grid(
+            farm,
+            variants=["tier2_2006_modelled_ingestion",
+                      "tier2_2006_ingestion_measured"],
+            n_iterations=5,
+            seed=1,
+            record=False,
+        )
+        assert all(a.dmi_measured == 7.0 for a in farm.animals)
+        assert all(a.ge_measured == 7.0 * 18.45 for a in farm.animals)
+        assert all(a.ration_rel_sd == 0.10 for a in farm.animals)
+
+    def test_paired_columns_correlate(self, engine, farm):
+        """The modelled and measured versions of the same equation
+        share the parameter draw: their columns must be positively
+        correlated (common Ym/ge chains), but not identical."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        out = engine.run_paired_variant_grid(
+            farm,
+            variants=["tier2_2006_modelled_ingestion",
+                      "tier2_2006_ingestion_measured"],
+            n_iterations=60,
+            seed=9,
+            record=False,
+        )
+        x = [r["tier2_2006_modelled_ingestion"] for r in out["emissions_table"]]
+        y = [r["tier2_2006_ingestion_measured"] for r in out["emissions_table"]]
+        mx, my = sum(x) / len(x), sum(y) / len(y)
+        cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
+        assert cov > 0
+        assert x != y
+
+    def test_json_entry_recorded(self, engine, farm):
+        """record=True writes one JSON entry carrying both tables
+        under uncertainty (contract of the R analysis script)."""
+        for a in farm.animals:
+            a.dmi_measured = 7.0
+            a.ge_measured = 7.0 * 18.45
+        out = engine.run_paired_variant_grid(
+            farm,
+            variants=["tier2_2006_modelled_ingestion"],
+            n_iterations=4,
+            seed=2,
+            sim_id="mc_test_enteric_paired",
+            record=True,
+        )
+        entries = [
+            e for e in engine.datastore._entries
+            if "emissions_table" in e.get("uncertainty", {})
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["sim_id"] == "mc_test_enteric_paired"
+        u = entry["uncertainty"]
+        assert u["emissions_table"] == out["emissions_table"]
+        assert u["parameter_draws_table"] == out["parameter_draws_table"]
+        assert u["variants"] == out["variants"]
+        assert u["enteric_ch4_stats"] == out["enteric_ch4_stats"]

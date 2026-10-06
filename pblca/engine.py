@@ -17,8 +17,8 @@ Central role (ISO 14040/14044 compliance):
    models remain pure evaluators reading ``ModelContext``;
 5. store each simulation (one entry) in a structured JSON file.
 
-``LCAEngine`` is the public façade: ``run_monte_carlo`` and
-``run_ration_comparison`` delegate to :mod:`pblca.mc` without any
+``LCAEngine`` is the public façade: ``run_monte_carlo``, ``run_ration_comparison`` and
+``run_paired_variant_grid`` delegate to :mod:`pblca.mc` without any
 change of signature or behaviour.
 """
 
@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from .gases import GasLedger
 from .impacts import GwpStarInputs, characterize
 from .mc import run_monte_carlo as _mc_run_monte_carlo
+from .mc import run_paired_variant_grid as _mc_run_paired_variant_grid
 from .mc import run_ration_comparison as _mc_run_ration_comparison
 from .params import ParameterSet, build_default_parameter_set
 from .registry import (
@@ -446,4 +447,53 @@ class LCAEngine:
             model_selection=model_selection,
             seed=seed,
             record=record,
+        )
+
+    # ------------------------------------------------------------------
+    # Paired Monte-Carlo: one draw, every enteric variant
+    # ------------------------------------------------------------------
+    def run_paired_variant_grid(
+        self,
+        farms: Union[FarmContext, Sequence[FarmContext]],
+        variants: Sequence[str],
+        n_iterations: int = 1000,
+        model_selection: Optional[Dict[str, str]] = None,
+        seed: Optional[int] = None,
+        record: bool = True,
+        sim_id: str = "paired_enteric_grid",
+    ) -> Dict[str, Any]:
+        """Paired evaluation of the enteric-CH4 variants
+        (delegates to :func:`pblca.mc.run_paired_variant_grid`).
+
+        At each Monte-Carlo iteration, ONE parameter draw is performed
+        and every variant of ``variants`` is evaluated with this same
+        draw, producing two paired tables (emissions per variant,
+        parameter draws) usable for the parameter-sensitivity
+        analysis. See the full contract in :mod:`pblca.mc`.
+
+        Args:
+            farms: one farm or a list of farms.
+            variants: enteric-CH4 variants to evaluate (paired columns).
+            n_iterations: number of iterations (>0).
+            model_selection: variants for the non-enteric slots.
+            seed: random seed (reproducibility).
+            record: if True, records a summary entry in the datastore.
+            sim_id: identifier of the recorded entry.
+
+        Returns:
+            a dictionary with ``emissions_table`` (one row per
+            iteration: the farm-total enteric CH4 of each variant) and
+            ``parameter_draws_table`` (the drawn parameter values of
+            each iteration), plus per-variant statistics under
+            ``enteric_ch4_stats``.
+        """
+        return _mc_run_paired_variant_grid(
+            self,
+            farms,
+            variants=variants,
+            n_iterations=n_iterations,
+            model_selection=model_selection,
+            seed=seed,
+            record=record,
+            sim_id=sim_id,
         )

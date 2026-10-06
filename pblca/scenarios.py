@@ -399,4 +399,28 @@ def run_case_study(
         except ValueError as exc:
             out["ration_comparison"] = f"skipped: {exc}"
 
+    # 4. Paired enteric-variant grid (one draw per iteration, every
+    #    enteric variant of the grid evaluated with this same draw).
+    enteric_variants = (config.variant_grid or {}).get("enteric_ch4", [])
+    if enteric_variants:
+        try:
+            paired = engine.run_paired_variant_grid(
+                farms,
+                variants=enteric_variants,
+                n_iterations=(
+                    mc_options.n_iterations if mc_options else 500
+                ),
+                seed=mc_options.seed if mc_options else 2024,
+                record=record,
+                sim_id=f"mc_{config.name}_enteric_paired",
+            )
+            out["paired_enteric_grid"] = {
+                "variants": paired["variants"],
+                "excluded_variants": paired["excluded_variants"],
+                "failed_iterations": paired["failed_iterations"],
+                "enteric_ch4_stats": paired["enteric_ch4_stats"],
+                "n_rows": len(paired["emissions_table"]),
+            }
+        except ValueError as exc:
+            out["paired_enteric_grid"] = f"skipped: {exc}"
     return out
