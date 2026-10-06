@@ -1669,6 +1669,31 @@ class TestPairedVariantGrid:
         assert cov > 0
         assert x != y
 
+    def test_gwp_factors_propagate(self, engine, farm):
+        """The characterisation factors are Parameters: a drawn
+        GWP100(CH4) scales the gwp100 impact proportionally, the gas
+        totals stay untouched, and central values reproduce the AR6
+        constants exactly (CO2 = 1)."""
+        r = engine.run(farm, record=False)
+        base = r.impacts["gwp100"]
+        ch4 = r.ledger.total("CH4")
+        assert base == pytest.approx(
+            27.0 * ch4
+            + 273.0 * r.ledger.total("N2O")
+            + r.ledger.total("CO2")
+        )
+        bumped = dict(engine.params.central_values())
+        bumped["gwp100_ch4_biogenic"] = 54.0  # double
+        r2 = engine.run(farm, values=bumped, record=False)
+        assert r2.impacts["gwp100"] == pytest.approx(base + 27.0 * ch4)
+        assert r2.ledger.total("CH4") == pytest.approx(ch4)
+        # GWP20 factor chain independent of the GWP100 one.
+        bumped2 = dict(engine.params.central_values())
+        bumped2["gwp20_ch4_biogenic"] = 159.4
+        r3 = engine.run(farm, values=bumped2, record=False)
+        assert r3.impacts["gwp100"] == pytest.approx(base)
+        assert r3.impacts["gwp20"] > r.impacts["gwp20"]
+
     def test_json_entry_recorded(self, engine, farm):
         """record=True writes one JSON entry carrying both tables
         under uncertainty (contract of the R analysis script)."""

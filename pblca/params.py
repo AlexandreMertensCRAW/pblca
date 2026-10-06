@@ -106,6 +106,34 @@ class Parameter:
         }
 
 
+def lognormal_sd_from_range(central: float, half_width: float) -> float:
+    """Geometric sigma of a lognormal matching a published range.
+
+    The IPCC publishes likely ranges as ``central +/- half_width``
+    (5-95 % confidence interval, e.g. Table 7.15 of AR6: GWP100 of
+    CH4-non fossil = 27.0 +/- 11). The geometric sigma of a lognormal
+    whose 5-95 % quantiles reproduce exactly that range is
+    ``ln(1 + half_width/central) / 1.645`` (1.645 = the one-sided 95 %
+    standard-normal quantile).
+
+    Args:
+        central: central (best-estimate) value of the range.
+        half_width: half of the published range width.
+
+    Returns:
+        the geometric sigma to pass as the ``sd`` of a lognormal
+        parameter.
+    """
+    import math as _math
+
+    if central <= 0 or half_width < 0:
+        raise ValueError(
+            f"invalid range {central} +/- {half_width}: central must be "
+            f"positive and half_width non-negative"
+        )
+    return _math.log(1.0 + half_width / central) / 1.645
+
+
 class ParameterSet:
     """The set of parameters of a simulation.
 
@@ -639,4 +667,73 @@ def build_default_parameter_set() -> ParameterSet:
         description="Diesel consumed for shallow tillage.",
     )
 
+    # --- Characterisation factors (layer 3) ------------------------
+    # IPCC AR6 (Forster et al. 2021), Table 7.15, no climate-carbon
+    # feedbacks, with the published likely (5-95 %) uncertainty ranges:
+    # GWP100 CH4-fossil 29.8 +/- 11, CH4-non fossil 27.0 +/- 11,
+    # N2O 273 +/- 130; GWP20 CH4-fossil 82.5 +/- 25.8, CH4-non fossil
+    # 79.7 +/- 25.8, N2O 273 +/- 118. The lognormal geometric sigma
+    # is derived in-code from the tabulated range by
+    # lognormal_sd_from_range (the distribution's 5-95 % quantiles
+    # reproduce the published range exactly).
+    ps.add(
+        "gwp100_ch4_biogenic", 27.0, "kg CO2e/kg CH4",
+        distribution="lognormal", sd=lognormal_sd_from_range(27.0, 11.0),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.15 "
+            "(CH4-non fossil, no feedbacks)"
+        ),
+        description=(
+            "GWP100 of biogenic methane (enteric, manure): agricultural "
+            "origin, oxidation CO2 not counted."
+        ),
+    )
+    ps.add(
+        "gwp100_ch4_fossil", 29.8, "kg CO2e/kg CH4",
+        distribution="lognormal", sd=lognormal_sd_from_range(29.8, 11.0),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.15 "
+            "(CH4-fossil, no feedbacks)"
+        ),
+        description=(
+            "GWP100 of fossil methane (incl. oxidation CO2); kept for "
+            "completeness of the characterisation set."
+        ),
+    )
+    ps.add(
+        "gwp100_n2o", 273.0, "kg CO2e/kg N2O",
+        distribution="lognormal", sd=lognormal_sd_from_range(273.0, 130.0),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.15 "
+            "(N2O, no feedbacks)"
+        ),
+        description="GWP100 of nitrous oxide.",
+    )
+    ps.add(
+        "gwp20_ch4_biogenic", 79.7, "kg CO2e/kg CH4",
+        distribution="lognormal", sd=lognormal_sd_from_range(79.7, 25.8),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.SM.7 "
+            "(CH4-non fossil, no feedbacks)"
+        ),
+        description="GWP20 of biogenic methane.",
+    )
+    ps.add(
+        "gwp20_ch4_fossil", 82.5, "kg CO2e/kg CH4",
+        distribution="lognormal", sd=lognormal_sd_from_range(82.5, 25.8),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.SM.7 "
+            "(CH4-fossil, no feedbacks)"
+        ),
+        description="GWP20 of fossil methane.",
+    )
+    ps.add(
+        "gwp20_n2o", 273.0, "kg CO2e/kg N2O",
+        distribution="lognormal", sd=lognormal_sd_from_range(273.0, 118.0),
+        reference=Reference(
+            "IPCC AR6 WGI Ch.7, Forster et al. 2021, Table 7.SM.7 "
+            "(N2O, no feedbacks)"
+        ),
+        description="GWP20 of nitrous oxide.",
+    )
     return ps

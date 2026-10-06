@@ -312,6 +312,7 @@ class LCAEngine:
                 ch4_current_kg=ledger.total("CH4"),
                 ch4_previous_kg=ch4_previous_kg,
             ),
+            values=values,
         )
         sim = SimulationResult(
             sim_id=sim_id or uuid.uuid4().hex[:12],
