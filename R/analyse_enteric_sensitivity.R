@@ -324,11 +324,12 @@ if (have_sg) {
   decomp <- cbind(meta,
     covariance = as.numeric(covs),
     contribution_pct = 100 * as.numeric(covs) / var_total)
-  decomp$label <- paste0(decomp$source, " (", decomp$gas, ")")
+  decomp$label <- paste0(decomp$source, " (", decomp$gas, ", ",
+                         decomp$error_type, ")")
   decomp <- decomp[order(-abs(decomp$contribution_pct)), ]
   write.csv(decomp, file.path(out_dir, "enteric_variance_decomposition.csv"),
             row.names = FALSE)
-  # Figure: contributions in %, facets inventory vs characterisation.
+  # Figure: contributions in %, one bar per unique term label.
   decomp$label <- factor(decomp$label,
     levels = decomp$label[order(-abs(decomp$contribution_pct))])
   p3 <- ggplot(decomp, aes(x = label, y = contribution_pct,
