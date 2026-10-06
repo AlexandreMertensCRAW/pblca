@@ -325,13 +325,13 @@ if (have_sg) {
     covariance = as.numeric(covs),
     contribution_pct = 100 * as.numeric(covs) / var_total)
   decomp$label <- paste0(decomp$source, " (", decomp$gas, ")")
-  decomp <- decomp[order(-abs(decomp$contrib_pct)), ]
+  decomp <- decomp[order(-abs(decomp$contribution_pct)), ]
   write.csv(decomp, file.path(out_dir, "enteric_variance_decomposition.csv"),
             row.names = FALSE)
   # Figure: contributions in %, facets inventory vs characterisation.
   decomp$label <- factor(decomp$label,
-    levels = decomp$label[order(-abs(decomp$contrib_pct))])
-  p3 <- ggplot(decomp, aes(x = label, y = contrib_pct,
+    levels = decomp$label[order(-abs(decomp$contribution_pct))])
+  p3 <- ggplot(decomp, aes(x = label, y = contribution_pct,
                            fill = error_type)) +
     geom_hline(yintercept = 0, colour = "grey40") +
     geom_col() +
@@ -365,7 +365,7 @@ if (have_sg) {
     print(head(de[, c("label", "contribution_pct")], 10), row.names = FALSE)
   }
   cat("\nSum of all contributions: ",
-      round(sum(decomp$contrib_pct), 2), "%\n")
+      round(sum(decomp$contribution_pct), 2), "%\n")
 } else {
   message("source_gas_columns or central_gwp_factors missing: variance ",
           "decomposition skipped (regenerate results.json).")
