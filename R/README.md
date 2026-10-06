@@ -43,6 +43,13 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
     `tier2_fao_ym_modelled_ingestion`), per indicator: the pure
     model-choice effect on the farm result (same draws, same
     iterations — CSV + figure);
+  - separates the two error types in the outputs: parameters
+    matching `gwp(100|20)_*` are characterisation errors (AR6
+    Table 7.15 conversion factors), all the others are inventory
+    errors (kg of gas emitted). The correlation CSV carries an
+    `error_type` column; the heatmap is faceted in two panels
+    (inventory on top, characterisation below); the console summary
+    prints the top-5 parameters of each type;
   - plots the heatmap of the Spearman correlations (parameters x
     variants) and the model-effect figure on gwp100.
   ```bash

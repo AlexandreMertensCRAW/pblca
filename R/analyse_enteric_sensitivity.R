@@ -120,6 +120,11 @@ corr <- do.call(rbind, unlist(lapply(methods, function(m) {
                correlation = as.numeric(r), stringsAsFactors = FALSE)
   })
 }), recursive = FALSE))
+# Error type: characterisation factors (gwp100_*/gwp20_*, the AR6
+# Table 7.15 metrics — uncertainty of the kg CO2e conversion) vs
+# inventory parameters (everything driving the kg of gas emitted).
+is_cf <- grepl("^gwp(100|20)_", corr$parameter)
+corr$error_type <- ifelse(is_cf, "characterisation", "inventory")
 corr <- corr[order(corr$variant, corr$method, -abs(corr$correlation)), ]
 write.csv(corr, file.path(out_dir, "enteric_paired_correlation.csv"),
           row.names = FALSE)
@@ -130,14 +135,19 @@ heat <- corr[corr$method == "spearman", ]
 heat$parameter <- factor(heat$parameter,
                         levels = heat$parameter[order(heat$correlation[heat$variant == main_variant])])
 heat$variant <- factor(heat$variant, levels = variants)
+heat$error_type <- factor(heat$error_type, levels = c("inventory", "characterisation"))
 p <- ggplot(heat, aes(x = variant, y = parameter, fill = correlation)) +
   geom_tile() +
   scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b",
                        midpoint = 0, limits = c(-1, 1), na.value = "grey90") +
+  facet_grid(error_type ~ ., scales = "free_y", space = "free_y") +
   labs(
     title = "Parameter-to-emissions sensitivity of the enteric CH4 models",
     subtitle = paste0("Spearman correlation of the drawn parameters with the ",
-                      "farm GWP100; n = ", nrow(emissions), " paired iterations"),
+                      "farm GWP100; n = ", nrow(emissions), " paired iterations. ",
+                      "Top panel: inventory errors (kg of gas emitted); ",
+                      "bottom panel: characterisation errors (AR6 Table 7.15 ",
+                      "conversion factors)"),
     x = "Model variant", y = "Parameter", fill = "rho"
   ) +
   theme_bw() +
@@ -201,7 +211,11 @@ message("Model-effect figure:  ", fig2_path)
 # variant and the model effects on gwp100.
 cat("\n== Top parameters (main variant:", main_variant, ", GWP100) ==\n")
 s <- corr[corr$variant == main_variant & corr$method == "spearman", ]
-print(head(s[order(-abs(s$correlation)), c("parameter", "correlation")], 5),
-      row.names = FALSE)
+for (etype in c("inventory", "characterisation")) {
+  cat("\n--", etype, "error --\n")
+  se <- s[s$error_type == etype, ]
+  print(head(se[order(-abs(se$correlation)), c("parameter", "correlation")], 5),
+        row.names = FALSE)
+}
 cat("\n== Pure model-choice effect on GWP100 (vs", main_variant, ") ==\n")
 print(g100[, c("variant", "mean", "sd")], row.names = FALSE)
