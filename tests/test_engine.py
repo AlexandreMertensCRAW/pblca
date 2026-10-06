@@ -1561,6 +1561,10 @@ class TestPairedVariantGrid:
         for v in variants:
             for k in indicators:
                 expected.add(f"{v}__{k}")
+        # Source x gas columns of the main variant (variance
+        # decomposition inputs); they carry no "__" ambiguity: a
+        # source name never contains a double underscore.
+        expected |= set(out["source_gas_columns"])
         n_params = len(engine.params)
         for row, draws in zip(out["emissions_table"],
                               out["parameter_draws_table"]):

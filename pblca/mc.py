@@ -708,12 +708,36 @@ def run_paired_variant_grid(
     indicator_names = sorted(central.impacts)
     gas_names = [g.lower() + "_kg" for g in GASES]
     indicators = [*indicator_names, *gas_names]
+    # Source x gas columns of the MAIN variant (kg/yr, from the
+    # ledger traceability): they let the R analysis decompose the
+    # GWP100 variance by emission source (enteric, manure, soils,
+    # ...), splitting the inventory error from the characterisation
+    # (GWP-factor) error. Only the (source, gas) pairs that actually
+    # carry emissions in the central run are exported.
+    central_sources = central.ledger.total_by_source()
+    source_gas_columns: List[str] = []
+    for source in sorted(central_sources):
+        for gas in sorted(central_sources[source]):
+            if central_sources[source][gas]:
+                source_gas_columns.append(f"{source}__{gas.lower()}_kg")
 
     def _farm_indicators(sim) -> Dict[str, float]:
         out_i: Dict[str, float] = {k: float(v) for k, v in sim.impacts.items()}
         for gas in GASES:
             out_i[gas.lower() + "_kg"] = float(sim.ledger.total(gas))
         return out_i
+
+    def _source_gas(sim) -> Dict[str, float]:
+        by_source = sim.ledger.total_by_source()
+        out_s: Dict[str, float] = {
+            col: 0.0 for col in source_gas_columns
+        }
+        for source in sorted(central_sources):
+            for gas, amount in by_source.get(source, {}).items():
+                col = f"{source}__{gas.lower()}_kg"
+                if col in out_s:
+                    out_s[col] = float(amount)
+        return out_s
 
     emissions_table: List[Dict[str, Any]] = []
     parameter_draws_table: List[Dict[str, Any]] = []
@@ -740,6 +764,8 @@ def run_paired_variant_grid(
             values_i = _farm_indicators(it)
             for k in indicators:
                 row_emissions[f"{variant}__{k}"] = values_i[k]
+            if variant == main_variant:
+                row_emissions.update(_source_gas(it))
         _set_ration_mode(ration_state, "measured")
         if not row_ok:
             continue
@@ -765,12 +791,23 @@ def run_paired_variant_grid(
                 **paired_differences_stats.get(f"{variant}", {}),
                 k: _stats([a - m for a, m in zip(alt_col, main_col)]),
             }
+    # Central values of the characterisation factors (AR6 Table 7.15):
+    # they let downstream analyses recompose an inventory-only GWP100
+    # difference (central factors) from the gas columns of the paired
+    # table, i.e. strip the characterisation uncertainty.
+    central_gwp_factors = {
+        pid: value
+        for pid, value in central_values.items()
+        if pid.startswith("gwp100_") or pid.startswith("gwp20_")
+    }
     out: Dict[str, Any] = {
         "sim_id": sim_id,
         "method": "paired Monte-Carlo",
         "slot": "enteric_ch4",
         "variants": runnable,
         "main_variant": main_variant,
+        "central_gwp_factors": central_gwp_factors,
+        "source_gas_columns": source_gas_columns,
         "excluded_variants": exclusions,
         "n_iterations": n_iterations,
         "seed": seed,

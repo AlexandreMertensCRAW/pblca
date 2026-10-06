@@ -50,6 +50,21 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
     `error_type` column; the heatmap is faceted in two panels
     (inventory on top, characterisation below); the console summary
     prints the top-5 parameters of each type;
+  - decomposes the GWP100 model-effect error bars: for each
+    alternative, the total error (drawn AR6 factors, the tabulated
+    `__gwp100` columns) and the inventory-only error (paired gas
+    differences recomposed with the CENTRAL Table 7.15 factors
+    exported by the engine as `central_gwp_factors`) are both
+    plotted; their gap is the characterisation contribution. The
+    model-effect CSV carries the `*_inventory_only` columns;
+  - decomposes the VARIANCE of the farm GWP100 of the main variant
+    by emission source (exact covariance decomposition: the
+    contributions sum to 100%): each source x gas term is split
+    into its central-factor part (inventory error) and, for
+    CH4/N2O, its factor-deviation part (characterisation error),
+    from the per-source `source_gas_columns` exported by the
+    engine. Output: `enteric_variance_decomposition.csv` +
+    `fig_decomposition_variance_gwp100.png`;
   - plots the heatmap of the Spearman correlations (parameters x
     variants) and the model-effect figure on gwp100.
   ```bash
@@ -58,8 +73,10 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   Output: `enteric_paired_emissions.csv`,
   `enteric_paired_parameter_draws.csv`,
   `enteric_paired_correlation.csv`, `enteric_paired_model_effect.csv`,
+  `enteric_variance_decomposition.csv`,
   `fig_correlation_parametres_ch4.png`,
-  `fig_effet_modeles_gwp100.png` (in `R/` by default).
+  `fig_effet_modeles_gwp100.png`,
+  `fig_decomposition_variance_gwp100.png` (in `R/` by default).
 - `plot_manure_ch4_by_model.R` — reads all the Monte-Carlo entries
   carrying per-system manure CH4 statistics (one per `manure_ch4`
   variant, `sim_id = "mc_<case>_manure_ch4_<variant>"`) and plots

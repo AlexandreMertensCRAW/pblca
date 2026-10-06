@@ -224,6 +224,9 @@ class TestPairedEntericGridContract:
         for v in variants:
             for k in indicators:
                 expected_keys.add(f"{v}__{k}")
+        # Source x gas columns of the main variant (engine section 3
+        # of analyse_enteric_sensitivity.R reads them).
+        expected_keys |= set(u["source_gas_columns"])
         for row in u["emissions_table"]:
             assert set(row) == expected_keys, "unpaired emissions row"
         # parameter_draws_table: same iterations, every pid present.
@@ -234,6 +237,18 @@ class TestPairedEntericGridContract:
         assert iterations_e == iterations_p, "tables not paired"
         # sim_id written by run_case_study (step 4).
         assert entry["sim_id"] == "mc_contract_enteric_paired"
+
+        # central_gwp_factors + source_gas_columns: read by section 3
+        # of analyse_enteric_sensitivity.R (variance decomposition:
+        # inventory vs characterisation split of the GWP100).
+        for pid, value in u["central_gwp_factors"].items():
+            assert pid.startswith(("gwp100_", "gwp20_"))
+            assert isinstance(value, float)
+        for col in u["source_gas_columns"]:
+            assert col.count("__") == 1
+            assert col.endswith(("_ch4_kg", "_n2o_kg", "_co2_kg"))
+            for row in u["emissions_table"]:
+                assert col in row, f"source column '{col}' missing"
 
     def test_paired_grid_stats(self, results):
         entries = [
