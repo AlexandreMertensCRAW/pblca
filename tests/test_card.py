@@ -78,7 +78,6 @@ name = "inline"
 
 [farm]
 farm_id = "ferme_test"
-n_purchased = 10.0
 avg_temp = 10.0
 
 [farm.manure_split]
@@ -89,6 +88,7 @@ concentrate_kg_dm = 1000.0
 
 [[farm.animals]]
 key = "veaux"
+n_head = 10.0
 days = 183
 bw_start = 50.0
 bw_end = 200.0

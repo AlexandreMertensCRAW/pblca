@@ -5,15 +5,17 @@ purchases, manure management, climate); :func:`build_farm` is the single
 generic builder that translates any spec into a :class:`FarmContext`,
 owning all the shared logic:
 
-* steady-state average annual headcount of each age class:
-  ``n_head = n_purchased * days / 365`` (purchased young stock going
-  through the classes in overlapping batches);
+* the average annual headcount of each group is DECLARED on the
+  group (``n_head``) — in a herd with cows, calves are born on the
+  farm, so the headcounts are decoupled from the purchases;
 * parcel carbon/fuel factors: ``deep_tillage`` selects the traceable
   parameter set (full vs reduced tillage, cropland vs grassland land-use
   and management factors) instead of hard-coded values;
 * lime declared in t/ha, converted to kg/ha;
-* calf purchases derived from the first age class
-  (``n_purchased * bw_start``).
+* purchased young animals are declared in ``purchases`` as a count
+  and a live weight (``n_calves_purchased`` x ``calf_purchased_bw_kg``);
+  ``build_farm`` derives the ``n_calves_purchased_kg_lw`` flow consumed
+  by the purchases model.
 
 Adding a new case study = writing one :class:`FarmSpec`; no logic is
 duplicated. On-farm measurements (ration sheets, GreenFeed monitoring,
@@ -45,11 +47,13 @@ class AnimalGroupSpec:
     registry defaults. ``extra`` is an escape hatch for any other
     ``AnimalGroup`` attribute (case-specific inputs).
 
-    ``n_head`` is NOT declared: it is computed by :func:`build_farm`
-    from ``n_purchased`` and ``days`` (steady-state headcount).
+    ``n_head`` (average annual headcount) is DECLARED here: the
+    herd dynamics (births, purchases, sales) belongs to the farm
+    data, not to the builder.
     """
 
     key: str
+    n_head: float
     days: int
     bw_start: float
     bw_end: float
@@ -115,13 +119,14 @@ class FarmSpec:
 
     Attributes:
         farm_id: farm identifier (used in the gas ledger traceability).
-        animals: animal groups (age classes / herds). ``n_head`` of
-            each group is computed from ``n_purchased``.
+        animals: animal groups (age classes / herds), each with its
+            DECLARED average annual headcount (``n_head``) — decoupled
+            from the purchases (a herd with cows births its calves).
         parcels: land parcels (grasslands and rotation crops).
         purchases: annual purchased inputs (keys as used by the
             purchases model, e.g. "concentrate_kg_dm").
-        n_purchased: young animals purchased per year (drives the
-            steady-state headcounts and the calf purchase flow).
+        (calf purchases are declared in ``purchases`` as
+        ``n_calves_purchased`` and ``calf_purchased_bw_kg``.)
         manure_split: share of excretions per management system
             (e.g. {"pasture": 0.45, "solid_storage": 0.55}).
         manure_exported: share of stored manure exported off-farm.
@@ -134,7 +139,6 @@ class FarmSpec:
     animals: List[AnimalGroupSpec]
     parcels: List[ParcelSpec]
     purchases: Dict[str, float]
-    n_purchased: float
     manure_split: Dict[str, float]
     manure_exported: float = 0.0
     avg_temp: float = 10.0
@@ -211,7 +215,7 @@ def build_farm(
     for a in spec.animals:
         group_kwargs: Dict[str, Any] = {
             "key": a.key,
-            "n_head": spec.n_purchased * a.days / 365.0,
+            "n_head": a.n_head,
             "bw_start": a.bw_start,
             "bw_end": a.bw_end,
             "days": a.days,
@@ -241,9 +245,15 @@ def build_farm(
     parcels = [_parcel(p, values) for p in spec.parcels]
 
     purchases = dict(spec.purchases)
-    if spec.animals and "n_calves_purchased_kg_lw" not in purchases:
-        first = spec.animals[0]
-        purchases["n_calves_purchased_kg_lw"] = spec.n_purchased * first.bw_start
+    n_calves = purchases.pop("n_calves_purchased", 0.0)
+    calf_bw = purchases.pop("calf_purchased_bw_kg", 0.0)
+    if n_calves < 0 or calf_bw < 0:
+        raise ValueError(
+            "purchases: 'n_calves_purchased' and 'calf_purchased_bw_kg' "
+            "must be positive"
+        )
+    if n_calves > 0 and "n_calves_purchased_kg_lw" not in purchases:
+        purchases["n_calves_purchased_kg_lw"] = n_calves * calf_bw
 
     return FarmContext(
         farm_id=spec.farm_id,

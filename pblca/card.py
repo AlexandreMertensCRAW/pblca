@@ -46,7 +46,6 @@ The inline farm mirrors :class:`pblca.farm_spec.FarmSpec`:
 
     [farm]
     farm_id = "ma_ferme"
-    n_purchased = 60.0
     avg_temp = 11.0
     mature_weight = 700.0
     manure_exported = 0.0
@@ -60,6 +59,7 @@ The inline farm mirrors :class:`pblca.farm_spec.FarmSpec`:
 
     [[farm.animals]]
     key = "veaux_0_6mois"
+    n_head = 30.0
     days = 183
     bw_start = 50.0
     bw_end = 200.0
@@ -210,10 +210,15 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
         raise CardError("[farm]: 'animals' must be a non-empty list")
     if not isinstance(parcels_data, list) or not parcels_data:
         raise CardError("[farm]: 'parcels' must be a non-empty list")
-    animals = [
-        _from_dataclass_dict(AnimalGroupSpec, a, f"[[farm.animals]] #{i}")
-        for i, a in enumerate(animals_data)
-    ]
+    animals = []
+    for i, a in enumerate(animals_data):
+        group = _from_dataclass_dict(AnimalGroupSpec, a, f"[[farm.animals]] #{i}")
+        if not isinstance(group.n_head, (int, float)) or group.n_head <= 0:
+            raise CardError(
+                f"[[farm.animals]] #{i}: 'n_head' is required "
+                "(average annual headcount, > 0)"
+            )
+        animals.append(group)
     parcels = [
         _from_dataclass_dict(ParcelSpec, p, f"[[farm.parcels]] #{i}")
         for i, p in enumerate(parcels_data)
@@ -228,7 +233,6 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
         animals=animals,
         parcels=parcels,
         purchases=dict(purchases),
-        n_purchased=base.n_purchased,
         manure_split=dict(manure_split),
         manure_exported=base.manure_exported,
         avg_temp=base.avg_temp,

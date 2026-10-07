@@ -10,11 +10,13 @@
 
 [farm]
 farm_id = "ferme_cas_etude_20ha"
-# 60 calves purchased/yr -> average annual headcounts:
-#   class 1: 60 x 183/365 ~= 30.0
-#   class 2: 60 x 182/365 ~= 29.9
-#   class 3: 60 x 265/365 ~= 43.6
-n_purchased = 60.0
+# The average annual headcount of each group is declared on the group
+# (n_head): the herd dynamics belongs to the farm data. In this
+# fattening case study the headcounts correspond to the steady state
+# of 60 purchased calves/yr going through the 3 age classes in
+# overlapping batches (n_head = 60 x days/365), but a herd with cows
+# would declare birth-driven headcounts instead — decoupled from the
+# purchases below.
 avg_temp = 11.0
 mature_weight = 700.0
 manure_exported = 0.0
@@ -26,6 +28,11 @@ pasture = 0.45
 solid_storage = 0.55
 
 [farm.purchases]
+# Purchased young animals: count and live weight; the engine derives
+# the calf purchase flow consumed by the purchases model
+# (n_calves_purchased_kg_lw = 60 x 50 = 3000 kg LW/yr).
+n_calves_purchased = 60.0
+calf_purchased_bw_kg = 50.0
 concentrate_kg_dm = 15000.0
 coproduct_kg_dm = 8000.0
 synthetic_n_kg = 2416.6666666666665
@@ -39,6 +46,7 @@ seeds_kg = 250.0
 [[farm.animals]]
 # 0-6 months (183 d): 50 -> 200 kg (~0.82 kg/d)
 key = "veaux_0_6mois"
+n_head = 30.0
 days = 183
 bw_start = 50.0
 bw_end = 200.0
@@ -58,6 +66,7 @@ diet_omd = 0.72
 [[farm.animals]]
 # 6-12 months (182 d): 200 -> 350 kg (~0.82 kg/d)
 key = "jeunes_6_12mois"
+n_head = 29.9
 days = 182
 bw_start = 200.0
 bw_end = 350.0
@@ -75,6 +84,7 @@ diet_omd = 0.67
 [[farm.animals]]
 # 12-21 months (265 d): 350 -> 600 kg (~0.94 kg/d)
 key = "engraissés_12_21mois"
+n_head = 43.6
 days = 265
 bw_start = 350.0
 bw_end = 600.0

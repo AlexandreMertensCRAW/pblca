@@ -27,11 +27,11 @@ from pblca.scenarios import CaseStudyConfig
 def _minimal_spec(**overrides) -> FarmSpec:
     spec = FarmSpec(
         farm_id="test_farm",
-        n_purchased=40.0,
         animals=[
             AnimalGroupSpec(
-                key="lot_a", days=365, bw_start=100, bw_end=300,
-                diet_de=0.65, share_concentrate=0.2, grazing=0.5,
+                key="lot_a", n_head=40.0, days=365, bw_start=100,
+                bw_end=300, diet_de=0.65, share_concentrate=0.2,
+                grazing=0.5,
             ),
         ],
         parcels=[
@@ -39,7 +39,11 @@ def _minimal_spec(**overrides) -> FarmSpec:
                        n_synthetic=120.0, deep_tillage=True),
             ParcelSpec(key="meadow", crop="prairie_temporaire", area=5.0),
         ],
-        purchases={"concentrate_kg_dm": 1000.0},
+        purchases={
+            "concentrate_kg_dm": 1000.0,
+            "n_calves_purchased": 40.0,
+            "calf_purchased_bw_kg": 100.0,
+        },
         manure_split={"pasture": 0.4, "solid_storage": 0.6},
         avg_temp=12.0,
     )
@@ -48,16 +52,20 @@ def _minimal_spec(**overrides) -> FarmSpec:
 
 
 class TestBuildFarm:
-    def test_headcount_from_n_purchased(self):
+    def test_headcount_declared(self):
         farm = build_farm(_minimal_spec())
         group = farm.animals[0]
-        assert group.n_head == pytest.approx(40.0 * 365 / 365.0)
+        assert group.n_head == pytest.approx(40.0)
 
     def test_calf_purchase_derived(self):
         farm = build_farm(_minimal_spec())
+        # n_calves_purchased x calf_purchased_bw_kg -> purchase flow;
+        # the declarative keys themselves are not passed downstream.
         assert farm.purchases["n_calves_purchased_kg_lw"] == pytest.approx(
             40.0 * 100.0
         )
+        assert "n_calves_purchased" not in farm.purchases
+        assert "calf_purchased_bw_kg" not in farm.purchases
 
     def test_calf_purchase_not_overridden(self):
         spec = _minimal_spec()
@@ -99,8 +107,8 @@ class TestBuildFarm:
         spec = _minimal_spec(
             animals=[
                 AnimalGroupSpec(
-                    key="lot_a", days=200, bw_start=100, bw_end=250,
-                    diet_de=0.65,
+                    key="lot_a", n_head=40.0, days=200, bw_start=100,
+                    bw_end=250, diet_de=0.65,
                     dmi_measured=6.0,
                     ge_measured=110.0,
                     ration_rel_sd=0.10,
@@ -126,8 +134,8 @@ class TestBuildFarm:
         spec = _minimal_spec(
             animals=[
                 AnimalGroupSpec(
-                    key="vaches", days=365, bw_start=600, bw_end=600,
-                    diet_de=0.70, milk_prot=0.9, milk_fat=1.1,
+                    key="vaches", n_head=40.0, days=365, bw_start=600,
+                    bw_end=600, diet_de=0.70, milk_prot=0.9, milk_fat=1.1,
                     pregnant=True, work_hours=0.5,
                 ),
             ],
@@ -143,8 +151,8 @@ class TestBuildFarm:
         spec = _minimal_spec(
             animals=[
                 AnimalGroupSpec(
-                    key="lot_a", days=365, bw_start=100, bw_end=300,
-                    diet_de=0.65,
+                    key="lot_a", n_head=40.0, days=365, bw_start=100,
+                    bw_end=300, diet_de=0.65,
                     extra={"system": "feedlot"},
                 ),
             ],
