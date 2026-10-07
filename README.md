@@ -70,18 +70,18 @@ sortie) se décrit dans **un seul fichier TOML** — la « card », sur le
 modèle des frameworks de simulation rapide : zéro code utilisateur.
 
 ```bash
-pblca run cards/ferme_20ha.toml          # exécute l'étude décrite par la card
+pblca run cards/studies/ferme_20ha.toml  # exécute l'étude décrite par la card
 pblca slots                              # slots + variantes disponibles
 pblca slots --slot enteric_ch4           # variantes d'un slot
 pblca farms                              # fermes intégrées utilisables
 ```
 
-Structure d'une card (voir `cards/ferme_20ha.toml`) :
+Structure d'une card étude (voir `cards/studies/ferme_20ha.toml`) :
 
 ```toml
 [study]
 name = "ferme_20ha"
-farm = "ferme_20ha"        # ferme intégrée, ou [farm] complet en ligne
+farm = "ferme_20ha"        # carte ferme (cards/farms/), chemin .toml, ou [farm] en ligne
 
 [model_selection]           # variantes du run central
 enteric_ch4 = "tier2_2006_modelled_ingestion"
@@ -96,6 +96,11 @@ seed = 2024
 [datastore]
 path = "results.json"
 ```
+
+**Carte ferme** (`cards/farms/ferme_20ha.toml`) : la ferme complète —
+troupeau, parcelles, achats, gestion fumier ET les mesures
+on-farm (AHCS, rations, dMO/dMOd) déclarées sur le groupe animal
+auquel elles appartiennent. Une étude = une paire de cartes.
 
 La card est validée au chargement (slot/variante inconnus → erreur
 explicite immédiate). Le fichier de résultats embarque la card

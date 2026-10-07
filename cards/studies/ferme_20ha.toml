@@ -1,18 +1,21 @@
 # Study card: 20 ha mixed crop-livestock farm, Tier-2 vs Tier-3 models.
 #
-# One file = one reproducible study: the farm, the model variants to
-# test and the Monte-Carlo plan all live here. Run it with:
+# One file = one reproducible study: the farm reference, the reference
+# models of every process, the model variants to test and the
+# Monte-Carlo plan all live here. Run it with:
 #
-#     pblca run cards/ferme_20ha.toml
+#     pblca run cards/studies/ferme_20ha.toml
 
 [study]
 name = "ferme_20ha"
-# Built-in farm shipped with the package (pblca.case_study.FERME_20HA).
+# Farm card by name (resolved against cards/farms/) or by path.
 farm = "ferme_20ha"
+# Reference variant of the paired enteric-variant analysis: every
+# alternative is reported as a paired difference against it.
+main_enteric_variant = "tier2_fao_ym_modelled_ingestion"
 
-# Variants used for the central run — EXPLICIT for every process.
-# These are the reference models of the study; use `pblca slots`
-# to list every available variant of each slot.
+# Reference models of the central run — EXPLICIT for every process.
+# Use `pblca slots` to list every available variant of each slot.
 [model_selection]
 # Layer 1 — agronomic processes
 enteric_ch4 = "tier2_2006_modelled_ingestion"   # enteric fermentation
@@ -29,15 +32,27 @@ fieldwork = "fuel_ademe"                           # fieldwork fuel
 [variant_grid]
 enteric_ch4 = [
     "tier2_2006_modelled_ingestion",
+    "tier2_2006_ingestion_measured",
     "tier2_2019_modelled_ingestion",
+    "tier2_2019_ingestion_measured",
+    "tier2_fao_ym_modelled_ingestion",
+    "tier2_fao_ym_ingestion_measured",
     "tier3_mills_modelled_ingestion",
+    "tier3_mills_ingestion_measured",
     "tier3_sauvant2011_modelled_ingestion",
+    "tier3_sauvant2011_ingestion_measured",
+    "measured_ahcs",
 ]
 manure_ch4 = ["ipcc_tier2", "tier3_eugene2019"]
 
 # Coherent scenarios run in addition to the one-slot sweeps.
 [study.named_combinations]
+# INRA Tier-3 chain: the digestible OM produces the enteric CH4,
+# the non-digestible OM goes to the manure.
 inra_tier3 = { enteric_ch4 = "tier3_sauvant2011_modelled_ingestion", manure_ch4 = "tier3_eugene2019" }
+# Same chain on the measured rations (ration sheets + GreenFeed
+# monitoring of this farm).
+inra_tier3_ingestion_measured = { enteric_ch4 = "tier3_sauvant2011_ingestion_measured", manure_ch4 = "tier3_eugene2019" }
 
 [monte_carlo]
 n_iterations = 500

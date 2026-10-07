@@ -85,16 +85,23 @@ les rations mesurées ; les processus restent des évaluateurs purs.
 
 ## Étape 1 — Configurer le cas d'étude
 
-**Fichier : `case_studies/ferme_20ha.py`** (déclaratif, rien à coder).
+**Une étude = une paire de cartes TOML** (déclaratif, rien à coder) :
 
-Le cas d'étude est décrit par une `CaseStudyConfig` (définie dans
-`pblca/scenarios.py, CaseStudyConfig`) :
+1. **La carte ferme** — `cards/farms/ferme_20ha.toml` : la ferme
+   complète (troupeau, parcelles, achats, gestion fumier) ET les
+   mesures on-farm (AHCS GreenFeed, rations, dMO/dMOd) déclarées sur
+   le groupe animal auquel elles appartiennent ;
+2. **La carte étude** — `cards/studies/ferme_20ha.toml` : les choix
+   de modélisation (voir ci-dessous).
+
+Le cas d'étude est aussi scriptable en Python via une `CaseStudyConfig`
+(définie dans `pblca/scenarios.py`) :
 
 | Champ | Rôle |
 |---|---|
 | `name` | identifiant du cas (préfixe des `sim_id` : `mc_<name>_...`) |
-| `farm_builder` | fonction qui construit la ferme (groupes d'animaux, parcelles, systèmes fumier) ; voir `pblca/case_study.py` et `pblca/farm_spec.py` |
-| `measurements` | mesures disponibles sur cette ferme : ingestions mesurées (`dmi_measured`), énergies (`ge_measured`), CH₄ mesuré (`ch4_ahcs`), avec leurs erreurs relatives (`ration_rel_sd`, `ch4_ahcs_rel_sd`) |
+| `farm_builder` | fonction qui construit la ferme ; en pratique, préférez la carte ferme (`farm = "..."` dans la carte étude, résolue vers `cards/farms/`) |
+| `measurements` | mesures disponibles sur cette ferme : déclarées directement dans la carte ferme, sur le groupe animal concerné |
 | `variant_grid` | dictionnaire *slot → liste de variantes* à balayer (ex. 11 variantes entériques × 2 fumier) |
 | `named_combinations` | chaînes cohérentes de variantes (ex. `inra_tier3` : Sauvant 2011 + Eugène 2019) |
 | `mc` | options numériques : `n_iterations`, `seed` (reproductibilité) |
@@ -109,23 +116,22 @@ référence au niveau ferme.
 
 ## Étape 1 bis — La card TOML et le CLI (zéro code)
 
-**Fichier : `cards/ferme_20ha.toml`** (déclaratif) — alternative à la
-`CaseStudyConfig` Python pour les utilisateurs qui ne veulent pas écrire
-de code. Une étude complète (ferme, variantes, plan Monte-Carlo, sortie)
-tient dans **un seul fichier TOML**, validé au chargement (slot/variante
-inconnus → erreur explicite immédiate) :
+**Fichier : `cards/studies/ferme_20ha.toml`** (déclaratif). Une étude
+complète (choix de modèles, plan Monte-Carlo, sortie) tient dans **une
+paire de cartes TOML**, validées au chargement (slot/variante inconnus →
+erreur explicite immédiate) :
 
 ```bash
-pblca run cards/ferme_20ha.toml          # exécute l'étude décrite par la card
+pblca run cards/studies/ferme_20ha.toml  # exécute l'étude (ferme + modèles)
 pblca slots [--slot enteric_ch4]        # inventaire des slots et variantes
-pblca farms                              # fermes intégrées disponibles
+pblca farms                              # cartes ferme disponibles
 ```
 
 Sections de la card (toutes optionnelles sauf la ferme) :
 
 | Section | Rôle |
 |---|---|
-| `[study]` | `name` ; `farm` = ferme intégrée (`ferme_20ha`) ou table `[farm]` complète en ligne ; `named_combinations` |
+| `[study]` | `name` ; `farm` = carte ferme (`ferme_20ha`, résolue vers `cards/farms/`), chemin `.toml` ou table `[farm]` en ligne ; `named_combinations` ; `main_enteric_variant` (référence de l'analyse appariée) |
 | `[model_selection]` | variantes du run central (slots absents = défaut du registre) |
 | `[variant_grid]` | sweeps mono-slot : chaque variante est exécutée à valeurs centrales puis en Monte-Carlo |
 | `[monte_carlo]` | `n_iterations`, `seed` |
@@ -144,7 +150,7 @@ les analyses R de l'Étape 3 s'appliquent donc telles quelles.
 ## Étape 2 — Exécuter le pipeline Python
 
 ```bash
-python run_case_study.py
+python run_case_study.py        # ou : pblca run cards/studies/ferme_20ha.toml
 ```
 
 Le script orchestre (voir `pblca/scenarios.py`, fonction `run_case_study`,
@@ -353,7 +359,7 @@ aucune valeur interpolée quand la source fournit une valeur tabulée.
 **Ajouter une variante** : déclarer le modèle dans le slot concerné
 (`pblca/processes/…`, enregistré dans `pblca/registry.py` avec sa
 `ModelSpec` : référence, champs requis), puis l'ajouter à
-`variant_grid` dans `case_studies/ferme_20ha.py`. Elle sera
+`variant_grid` dans `cards/studies/ferme_20ha.toml`. Elle sera
 automatiquement balayée, appariée et analysée ; si elle exige des champs
 de groupe absents de la ferme, elle est exclue avec la raison plutôt
 que d'échouer.

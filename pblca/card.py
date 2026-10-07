@@ -132,6 +132,7 @@ class Card:
     variant_grid: Dict[str, List[str]] = field(default_factory=dict)
     named_combinations: Dict[str, Dict[str, str]] = field(default_factory=dict)
     mc: Optional[NumericalOptions] = None
+    main_enteric_variant: Optional[str] = None
     datastore_path: str = "results.json"
     source_sha256: str = ""
     source_text: str = ""
@@ -143,6 +144,7 @@ class Card:
             "name": self.name,
             "sha256": self.source_sha256,
             "model_selection": dict(self.model_selection),
+            "main_enteric_variant": self.main_enteric_variant,
             "variant_grid": {k: list(v) for k, v in self.variant_grid.items()},
             "named_combinations": {
                 k: dict(v) for k, v in self.named_combinations.items()
@@ -163,6 +165,7 @@ class Card:
             variant_grid=dict(self.variant_grid) or None,
             named_combinations=dict(self.named_combinations) or None,
             mc=self.mc,
+            main_enteric_variant=self.main_enteric_variant,
         )
 
 
@@ -253,6 +256,31 @@ def _validate_selection(
             ) from exc
 
 
+
+def _resolve_relative(card_path: str, ref: str) -> str:
+    """Resolve a farm reference against the study card directory."""
+    import os
+
+    if os.path.isabs(ref):
+        return ref
+    return os.path.join(os.path.dirname(os.path.abspath(card_path)), ref)
+
+
+def _load_farm_card(path: str) -> FarmSpec:
+    """Load a farm card (a TOML file holding an inline [farm] table)."""
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except OSError as exc:
+        raise CardError(f"farm card '{path}': {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise CardError(f"farm card '{path}': invalid TOML: {exc}") from exc
+    table = data.get("farm")
+    if not isinstance(table, dict):
+        raise CardError(f"farm card '{path}': missing [farm] table")
+    return _parse_farm(dict(table))
+
+
 def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
     """Load and validate a study card from a TOML file.
 
@@ -279,7 +307,10 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
     study = doc.get("study", {})
     if not isinstance(study, dict):
         raise CardError("'study' must be a table")
-    unknown = sorted(set(study) - {"name", "farm", "named_combinations"})
+    unknown = sorted(
+        set(study)
+        - {"name", "farm", "named_combinations", "main_enteric_variant"}
+    )
     if unknown:
         raise CardError(f"[study]: unknown key(s) {unknown}")
 
@@ -290,18 +321,32 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
     if farm_ref is None:
         farm_ref = doc.get("farm")
     if isinstance(farm_ref, str):
-        if farm_ref not in BUILTIN_FARMS:
+        # Farm cards shipped with the repository (cards/farms/) take
+        # precedence: they carry the on-farm measurements; the
+        # package built-ins are the parameterless fallback.
+        import os
+
+        repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        farm_card = os.path.join(repo_dir, "cards", "farms", farm_ref + ".toml")
+        if os.path.isfile(farm_card):
+            farm = _load_farm_card(farm_card)
+        elif not BUILTIN_FARMS:
+            _register_builtins()
+        elif farm_ref in BUILTIN_FARMS:
+            farm = BUILTIN_FARMS[farm_ref]
+        elif farm_ref.endswith(".toml"):
+            farm = _load_farm_card(_resolve_relative(path, farm_ref))
+        else:
             raise CardError(
-                f"[study]: unknown built-in farm '{farm_ref}' "
-                f"(available: {sorted(BUILTIN_FARMS)})"
+                f"[study]: unknown farm '{farm_ref}' (available: "
+                f"{sorted(BUILTIN_FARMS)}, or a path ending in .toml)"
             )
-        farm = BUILTIN_FARMS[farm_ref]
     elif isinstance(farm_ref, dict):
         farm = _parse_farm(dict(farm_ref))
     else:
         raise CardError(
-            "[study]: 'farm' must be a built-in farm name (string) "
-            "or an inline [farm] table"
+            "[study]: 'farm' must be a farm name (string), a path to a "
+            "farm card (.toml) or an inline [farm] table"
         )
 
     model_selection = {
@@ -360,6 +405,18 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
     name = study.get("name") or "etude"
     if not isinstance(name, str) or not name:
         raise CardError("[study]: 'name' must be a non-empty string")
+    main_enteric_variant = study.get("main_enteric_variant")
+    if main_enteric_variant is not None and (
+        not isinstance(main_enteric_variant, str) or not main_enteric_variant
+    ):
+        raise CardError(
+            "[study]: 'main_enteric_variant' must be a non-empty string"
+        )
+    if main_enteric_variant is not None:
+        _validate_selection(
+            registry, {"enteric_ch4": main_enteric_variant},
+            "[study] main_enteric_variant",
+        )
 
     return Card(
         path=path,
@@ -369,6 +426,7 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
         variant_grid=dict(variant_grid),
         named_combinations=named_combinations,
         mc=mc,
+        main_enteric_variant=main_enteric_variant,
         datastore_path=datastore.get("path", "results.json"),
         source_sha256=hashlib.sha256(source_text_bytes).hexdigest(),
         source_text=source_text_bytes.decode("utf-8"),

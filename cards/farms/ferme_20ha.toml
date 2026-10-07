@@ -1,0 +1,144 @@
+# Farm card: 20 ha mixed crop-livestock farm (single source of truth).
+#
+# One file = one farm: herd, parcels, purchases, manure management AND
+# the on-farm measurements (declared on the animal group they belong
+# to). A study card references it by name (`farm = "ferme_20ha"`) or
+# by path. Use `pblca farms` to list the available farm cards.
+#
+# Measurements marked DEMO are illustrative placeholders: replace them
+# with the actual farm data for a real study.
+
+[farm]
+farm_id = "ferme_cas_etude_20ha"
+# 60 calves purchased/yr -> average annual headcounts:
+#   class 1: 60 x 183/365 ~= 30.0
+#   class 2: 60 x 182/365 ~= 29.9
+#   class 3: 60 x 265/365 ~= 43.6
+n_purchased = 60.0
+avg_temp = 11.0
+mature_weight = 700.0
+manure_exported = 0.0
+
+[farm.manure_split]
+# 45 % of excretions at pasture (permanent and temporary grassland),
+# 55 % in buildings -> solid storage -> spreading.
+pasture = 0.45
+solid_storage = 0.55
+
+[farm.purchases]
+concentrate_kg_dm = 15000.0
+coproduct_kg_dm = 8000.0
+synthetic_n_kg = 2416.6666666666665
+lime_kg = 583.3333333333334
+p2o5_kg = 210.0
+k2o_kg = 280.0
+seeds_kg = 250.0
+
+# --- Animal groups (age classes of the fattening batch) ---------------
+
+[[farm.animals]]
+# 0-6 months (183 d): 50 -> 200 kg (~0.82 kg/d)
+key = "veaux_0_6mois"
+days = 183
+bw_start = 50.0
+bw_end = 200.0
+diet_de = 0.70
+share_concentrate = 0.10
+grazing = 0.5
+system = "mixed"
+# On-farm measurements (DEMO): GreenFeed AHCS g CH4/head/day,
+# ration sheets kg DM/head/day, INRA diet characterisation.
+ch4_measured_ahcs = 90.0
+ch4_measured_ahcs_rel_sd = 0.08
+dmi_measured = 4.2
+ration_rel_sd = 0.10
+diet_om = 0.91
+diet_omd = 0.72
+
+[[farm.animals]]
+# 6-12 months (182 d): 200 -> 350 kg (~0.82 kg/d)
+key = "jeunes_6_12mois"
+days = 182
+bw_start = 200.0
+bw_end = 350.0
+diet_de = 0.65
+share_concentrate = 0.20
+grazing = 0.8
+system = "mixed"
+ch4_measured_ahcs = 180.0
+ch4_measured_ahcs_rel_sd = 0.08
+dmi_measured = 7.4
+ration_rel_sd = 0.10
+diet_om = 0.91
+diet_omd = 0.67
+
+[[farm.animals]]
+# 12-21 months (265 d): 350 -> 600 kg (~0.94 kg/d)
+key = "engraissés_12_21mois"
+days = 265
+bw_start = 350.0
+bw_end = 600.0
+diet_de = 0.62
+share_concentrate = 0.35
+grazing = 0.7
+system = "mixed"
+ch4_measured_ahcs = 260.0
+ch4_measured_ahcs_rel_sd = 0.08
+dmi_measured = 10.2
+ration_rel_sd = 0.10
+diet_om = 0.91
+diet_omd = 0.64
+
+# --- Parcels ------------------------------------------------------------
+# 13 ha permanent grassland (grazed + mown, no mineral fertilisation).
+
+[[farm.parcels]]
+key = "prairie_permanente"
+crop = "prairie_permanente"
+area = 13.0
+is_grassland = true
+fuel_pids = ["fuel_mowing"]
+fmg_pid = "fmg_full_tillage"
+fi_pid = "fi_medium_input"
+
+# 7 ha in rotation: each crop covers 7/6 ha on an annual average.
+# (crop, synthetic N kgN/ha, lime t/ha, deep tillage)
+
+[[farm.parcels]]
+key = "pomme_de_terre"
+crop = "pomme_de_terre"
+area = 1.1666666666666667
+n_synthetic = 110.0
+lime_t_ha = 0.5
+deep_tillage = true
+
+[[farm.parcels]]
+key = "colza"
+crop = "colza"
+area = 1.1666666666666667
+n_synthetic = 140.0
+deep_tillage = true
+
+[[farm.parcels]]
+key = "epeautre"
+crop = "epeautre"
+area = 1.1666666666666667
+n_synthetic = 90.0
+deep_tillage = true
+
+[[farm.parcels]]
+key = "avoine"
+crop = "avoine"
+area = 1.1666666666666667
+n_synthetic = 70.0
+deep_tillage = true
+
+[[farm.parcels]]
+key = "prairie_temporaire_an1"
+crop = "prairie_temporaire_an1"
+area = 1.1666666666666667
+
+[[farm.parcels]]
+key = "prairie_temporaire_an2"
+crop = "prairie_temporaire_an2"
+area = 1.1666666666666667

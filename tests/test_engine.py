@@ -40,6 +40,23 @@ def farm(engine):
     return build_case_study_farm(engine.params)
 
 
+def strip_measurements(farm):
+    """Return a copy of the farm with every on-farm measurement unset
+    (the reference farm card now carries them by default)."""
+    import copy
+
+    bare = copy.deepcopy(farm)
+    for a in bare.animals:
+        a.dmi_measured = None
+        a.ge_measured = None
+        a.ration_rel_sd = None
+        a.ch4_measured_ahcs = None
+        a.ch4_measured_ahcs_rel_sd = None
+        a.diet_om = None
+        a.diet_omd = None
+    return bare
+
+
 @pytest.fixture()
 def farm_inra_tier3(engine):
     """Case-study farm with the INRA diet characterisation (dMO, not
@@ -872,7 +889,9 @@ class TestEngine:
     def test_ration_comparison_requires_measures(self, engine, farm):
         # No measured values anywhere: the comparison is meaningless.
         with pytest.raises(ValueError):
-            engine.run_ration_comparison(farm, n_iterations=5, record=False)
+            engine.run_ration_comparison(
+                strip_measurements(farm), n_iterations=5, record=False
+            )
 
     def test_ration_comparison_reproducible(self, engine, farm):
         for a in farm.animals:
@@ -1270,7 +1289,8 @@ class TestScenarioGrid:
 
         config = CaseStudyConfig(
             name="no_data_farm",
-            farm_builder=build_case_study_farm,
+            farm_builder=lambda params: strip_measurements(
+                build_case_study_farm(params)),
             variant_grid={
                 "enteric_ch4": ["tier2_2006", "measured_ahcs",
                                 "tier3_sauvant2011"],
@@ -1468,7 +1488,8 @@ class TestIngestionExplicitVariants:
 
         config = CaseStudyConfig(
             name="nodmi_farm",
-            farm_builder=build_case_study_farm,
+            farm_builder=lambda params: strip_measurements(
+                build_case_study_farm(params)),
             variant_grid={
                 "enteric_ch4": [
                     "tier2_2006_modelled_ingestion",
@@ -1524,7 +1545,7 @@ class TestPairedVariantGrid:
         """The variants that cannot run on the farm are excluded with
         the reason; the runnable ones produce paired columns."""
         out = engine.run_paired_variant_grid(
-            farm,
+            strip_measurements(farm),
             variants=[
                 "tier2_2006_modelled_ingestion",
                 "tier3_sauvant2011_modelled_ingestion",  # needs diet_om

@@ -13,7 +13,7 @@ from pblca.scenarios import NumericalOptions
 
 CARDS_DIR = Path(__file__).resolve().parents[1] / "cards"
 
-EXAMPLE_CARD = CARDS_DIR / "ferme_20ha.toml"
+EXAMPLE_CARD = CARDS_DIR / "studies" / "ferme_20ha.toml"
 
 MINIMAL_CARD = """
 [study]
@@ -34,7 +34,8 @@ def test_load_example_card():
     assert card.farm.farm_id == "ferme_cas_etude_20ha"
     assert card.mc == NumericalOptions(n_iterations=500, seed=2024)
     assert card.model_selection["enteric_ch4"] == "tier2_2006_modelled_ingestion"
-    assert len(card.variant_grid["enteric_ch4"]) == 4
+    assert len(card.variant_grid["enteric_ch4"]) == 11
+    assert card.main_enteric_variant == "tier2_fao_ym_modelled_ingestion"
     assert "inra_tier3" in card.named_combinations
     assert card.source_sha256 != ""
 
@@ -60,7 +61,7 @@ def test_unknown_variant_fails_fast():
 
 
 def test_unknown_builtin_farm_fails_fast():
-    with pytest.raises(CardError, match="unknown built-in farm"):
+    with pytest.raises(CardError, match="unknown farm"):
         load_card(_write_card_tmp('[study]\nfarm = "nope"\n'))
 
 
@@ -153,4 +154,4 @@ def test_cli_run_invalid_card(tmp_path):
         text=True,
     )
     assert result.returncode == 2
-    assert "unknown built-in farm" in result.stderr
+    assert "unknown farm" in result.stderr
