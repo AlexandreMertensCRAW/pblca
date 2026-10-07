@@ -10,10 +10,18 @@ name = "ferme_20ha"
 # Built-in farm shipped with the package (pblca.case_study.FERME_20HA).
 farm = "ferme_20ha"
 
-# Variants used for the central run (slots left out keep the
-# registry default). Use `pblca slots` to list every variant.
+# Variants used for the central run — EXPLICIT for every process.
+# These are the reference models of the study; use `pblca slots`
+# to list every available variant of each slot.
 [model_selection]
-enteric_ch4 = "tier2_2006_modelled_ingestion"
+# Layer 1 — agronomic processes
+enteric_ch4 = "tier2_2006_modelled_ingestion"   # enteric fermentation
+manure_ch4 = "ipcc_tier2"                          # manure CH4 (MCF chain)
+manure_n2o = "ipcc_tier2"                          # manure N2O (housing/storage/spreading)
+soil_n2o = "ipcc_2019"                             # soil N2O (direct + indirect)
+soil_carbon = "ipcc_stock_change"                  # soil C stock change
+purchases = "agribalyse_ecoinvent"                 # upstream inputs (Agram)
+fieldwork = "fuel_ademe"                           # fieldwork fuel
 
 # One-slot sweeps: each variant runs at central values and in
 # Monte-Carlo. Variants requiring measurements the farm does not
