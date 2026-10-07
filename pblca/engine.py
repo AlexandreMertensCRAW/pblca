@@ -130,6 +130,8 @@ class DataStore:
     ) -> None:
         self.path = path
         self._entries: List[Dict[str, Any]] = []
+        self.card: Optional[Dict[str, Any]] = None
+        self.card_source: Optional[str] = None
         if os.path.exists(path):
             if archive_previous:
                 self._archive(path)
@@ -165,7 +167,11 @@ class DataStore:
         target = path or self.path
         directory = os.path.dirname(os.path.abspath(target))
         os.makedirs(directory or ".", exist_ok=True)
-        doc = {"format_version": "1.0", "simulations": self._entries}
+        doc: Dict[str, Any] = {"format_version": "1.0", "simulations": self._entries}
+        if self.card is not None:
+            doc["card"] = self.card
+        if self.card_source is not None:
+            doc["card_source"] = self.card_source
         with open(target, "w", encoding="utf-8") as f:
             json.dump(doc, f, indent=2, ensure_ascii=False)
 
