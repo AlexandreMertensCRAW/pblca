@@ -99,7 +99,6 @@ Le cas d'étude est décrit par une `CaseStudyConfig` (définie dans
 | `named_combinations` | chaînes cohérentes de variantes (ex. `inra_tier3` : Sauvant 2011 + Eugène 2019) |
 | `mc` | options numériques : `n_iterations`, `seed` (reproductibilité) |
 | `main_enteric_variant` | **la méthode principale** de référence pour l'analyse appariée (ex. `tier2_fao_ym_modelled_ingestion`) ; toutes les autres deviennent des alternatives comparées à elle |
-| `paired_grid` | grille appariée **multi-slots** (`PairedGridConfig`) : variantes à balayer par slot, sélection de référence des différences appariées, `full_factorial` (produit cartésien) — voir Étape 2, point 5 |
 
 **Comment choisir `main_enteric_variant`** : c'est la variante dont le
 GWP100 est décomposé (Étape 3) et le point zéro des figures d'effet-modèle.
@@ -129,7 +128,6 @@ Sections de la card (toutes optionnelles sauf la ferme) :
 | `[study]` | `name` ; `farm` = ferme intégrée (`ferme_20ha`) ou table `[farm]` complète en ligne ; `named_combinations` |
 | `[model_selection]` | variantes du run central (slots absents = défaut du registre) |
 | `[variant_grid]` | sweeps mono-slot : chaque variante est exécutée à valeurs centrales puis en Monte-Carlo |
-| `[paired_grid]` | grille appariée multi-slots : `slots` (variantes par slot), `main_selection` (référence des différences appariées), `full_factorial` (produit cartésien au lieu d'un facteur à la fois) |
 | `[monte_carlo]` | `n_iterations`, `seed` |
 | `[datastore]` | `path` du JSON de résultats (défaut `results.json`) |
 
@@ -170,28 +168,6 @@ fonction run_case_study) :
    donc directement comparables ligne à ligne : une différence entre deux
    colonnes d'une même ligne reflète le choix du modèle, pas le bruit
    d'échantillonnage.
-5. **Grille appariée multi-slots** (si `paired_grid` est déclaré) —
-   généralisation du point 4 à n'importe quel ensemble de slots :
-   [`LCAEngine.run_paired_grid`](docs_html/pblca.html#LCAEngine.run_paired_grid)
-   (`pblca/mc.py`, `run_paired_grid`). Un tirage par itération, puis
-   **toutes les colonnes slot × variante** évaluées avec ce même tirage —
-   en mode *un facteur à la fois* (défaut : une colonne par variante
-   balayée, les autres slots balayés restant à leur variante de
-   référence) ou en **factoriel complet** (`full_factorial = true` :
-   produit cartésien, ex. 11 entériques × 2 fumiers = 22 colonnes
-   appariées). Les **différences appariées** entre deux colonnes ne
-   différant que par un slot isolent l'effet pur de ce slot
-   (décomposition de variance étendue au choix fumier, voir Étape 3.3).
-
-   `run_paired_variant_grid` est désormais un cas particulier de
-   `run_paired_grid` (`slots = {"enteric_ch4": ...}`) ; son contrat de
-   sortie (clés `variants`, `main_variant`, colonnes
-   `<variante>__<indicateur>`) est inchangé — les scripts R existants
-   ne bougent pas. L'entrée JSON correspondante est
-   `sim_id = mc_<cas>_paired_grid`, avec les colonnes
-   `<slot>=<variante>__<indicateur>` et la référence des différences
-   dans `main_selection`.
-
 **Sortie : `results.json`** — une entrée par simulation. L'entrée de la
 grille appariée (`sim_id = mc_<cas>_enteric_paired`) contient, sous
 `uncertainty` :
@@ -272,43 +248,12 @@ d'erreur, les effets de modèle et la décomposition de variance par bloc.
 | `plot_manure_ch4_by_model.R` | `fig_ch4_fumier_par_modele.png` | CH₄ fumier par système de gestion, par variante |
 | `plot_ration_comparison_correlation.R` | `fig_correlation_rations.png` | corrélation équations IPCC vs rations mesurées |
 
-### 3.3 — Analyse de la grille appariée multi-slots
-
-```bash
-Rscript R/analyse_paired_grid.R results.json [output_dir]
-```
-
-Lit l'entrée `sim_id = mc_<cas>_paired_grid` (étape 5 du pipeline, un
-tirage par itération partagé par toutes les colonnes de la grille) :
-
-1. **Corrélations paramètres → GWP100 par colonne** —
-   `paired_grid_correlation.csv` : Pearson + Spearman, avec le type
-   d'erreur (`inventory` / `characterisation`).
-2. **Effet pur du choix de modèle, par slot** —
-   `paired_grid_model_effect.csv` et
-   `fig_effet_slots_gwp100.png` (forest plot facetté par slot) :
-   différence appariée de chaque variante balayée contre la sélection
-   de référence (`main_selection`), par indicateur. Exemple de
-   lecture : « passer du Tier-2 au Tier-3 fumier change le GWP100
-   ferme de X ± Y kg CO₂e, indépendamment des paramètres ».
-3. **Décomposition de variance appariée à deux facteurs** —
-   `paired_grid_variance_share.csv` (+
-   `fig_interaction_slots_gwp100.png`) : part du GWP100 imputable à
-   chaque choix de modèle (par slot balayé), à leur **interaction**
-   (l'effet d'un choix dépend-il de l'autre ? identifiée uniquement
-   en factoriel complet) et aux tirages appariés (résidu). En mode
-   *un facteur à la fois*, la décomposition est additive et un
-   avertissement indique de déclarer `full_factorial = true` pour
-   identifier l'interaction.
-4. **Tables brutes** — `paired_grid_emissions.csv` et
-   `paired_grid_parameter_draws.csv`.
-
 ---
 
 ## Étape 4 — Tests et contrat Python → R
 
 ```bash
-python -m pytest tests/        # 136 tests
+python -m pytest tests/        # 122 tests
 ```
 
 - **Tests unitaires** (`tests/test_engine.py`, `tests/test_mc.py`, …) :
@@ -321,8 +266,7 @@ python -m pytest tests/        # 136 tests
   puis vérifie que **chaque chemin de clé** déréférencé par les scripts R
   existe avec la structure attendue (`uncertainty.emissions_table`,
   `source_gas_columns`, `central_gwp_factors`, convention `sim_id`,
-  appariement des tables…, et la grille multi-slots : `combinations`,
-  `slots`, `main_selection`, `mode`). Si vous ajoutez une sortie consommée par R,
+  appariement des tables…). Si vous ajoutez une sortie consommée par R,
   ajoutez-y le test correspondant.
 
 ---
@@ -343,11 +287,9 @@ son ancre. Liens utiles :
   [`run`](docs_html/pblca.html#LCAEngine.run),
   [`run_monte_carlo`](docs_html/pblca.html#LCAEngine.run_monte_carlo),
   [`run_ration_comparison`](docs_html/pblca.html#LCAEngine.run_ration_comparison),
-  [`run_paired_variant_grid`](docs_html/pblca.html#LCAEngine.run_paired_variant_grid),
-  [`run_paired_grid`](docs_html/pblca.html#LCAEngine.run_paired_grid)
+  [`run_paired_variant_grid`](docs_html/pblca.html#LCAEngine.run_paired_variant_grid)
 - [`load_card`](docs_html/pblca.html#load_card) / [`run_card`](docs_html/pblca.html#run_card) —
-  card d'étude TOML (validation, exécution, traçabilité) et
-  [`PairedGridConfig`](docs_html/pblca.html#PairedGridConfig)
+  card d'étude TOML (validation, exécution, traçabilité)
 - [`ParameterSet`](docs_html/pblca.html#ParameterSet) — paramètres tracés :
   [`draw`](docs_html/pblca.html#ParameterSet.draw),
   [`central_values`](docs_html/pblca.html#ParameterSet.central_values)
@@ -376,8 +318,8 @@ en français.
 
 ## Pour aller plus loin (niveau développeur)
 
-**Mécanisme des tirages appariés** (`pblca/mc.py`, `run_paired_grid` ;
-`run_paired_variant_grid` en est le cas particulier entérique). À chaque itération :
+**Mécanisme des tirages appariés** (`pblca/mc.py`,
+`run_paired_variant_grid`). À chaque itération :
 1. `engine.params.draw(rng)` tire **toutes** les valeurs de paramètres
    (y compris les facteurs GWP) ;
 2. les rations mesurées sont perturbées (un facteur log-normal par groupe

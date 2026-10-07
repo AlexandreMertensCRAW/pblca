@@ -128,35 +128,10 @@ class NumericalOptions:
 
 
 @dataclass
-class PairedGridConfig:
-    """Paired multi-slot grid (step 5 of ``run_case_study``).
-
-    Attributes:
-        slots: variants to sweep, per slot, e.g.
-            ``{"enteric_ch4": [...], "manure_ch4": [...]}``. One
-            column per (slot, variant) sharing one draw per Monte-
-            Carlo iteration; variants that cannot run on the farm
-            are excluded automatically.
-        main_selection: reference variant per swept slot (default:
-            the first runnable variant of each slot); the paired
-            differences isolate the pure effect of each model
-            choice.
-        full_factorial: sweep the Cartesian product of the variants
-            (one column per combination) instead of one factor at
-            a time.
-    """
-
-    slots: Dict[str, List[str]]
-    main_selection: Optional[Dict[str, str]] = None
-    full_factorial: bool = False
-
-
-@dataclass
 class CaseStudyConfig:
     """Declarative description of a case study.
 
     Attributes:
-        paired_grid: paired multi-slot grid (None = none). Sweeps
         name: short name (used in the JSON sim_id prefixes).
         farm: declarative farm specification (FarmSpec, values only)
             built by the generic pblca.farm_spec.build_farm; the
@@ -179,12 +154,6 @@ class CaseStudyConfig:
             enteric-variant grid (step 4 of ``run_case_study``): the
             alternatives are reported as paired differences against
             it. Default: the first enteric variant of the grid.
-        paired_grid: paired multi-slot grid (None = none). Sweeps
-            the listed variants per slot with ONE shared draw per
-            Monte-Carlo iteration, so the paired differences
-            isolate the pure effect of each model choice (extends
-            step 4 to any set of slots, e.g. the manure-chain
-            models).
     """
 
     name: str
@@ -195,7 +164,6 @@ class CaseStudyConfig:
     named_combinations: Optional[Dict[str, Dict[str, str]]] = None
     mc: Optional[NumericalOptions] = None
     main_enteric_variant: Optional[str] = None
-    paired_grid: Optional[PairedGridConfig] = None
 
 
 @dataclass
@@ -466,35 +434,4 @@ def run_case_study(
         except ValueError as exc:
             out["paired_enteric_grid"] = f"skipped: {exc}"
 
-    # 5. Paired multi-slot grid (one draw per iteration, every
-    #    swept slot x variant evaluated with this same draw).
-    if config.paired_grid is not None:
-        try:
-            paired = engine.run_paired_grid(
-                farms,
-                slots=config.paired_grid.slots,
-                n_iterations=(
-                    mc_options.n_iterations if mc_options else 500
-                ),
-                seed=mc_options.seed if mc_options else 2024,
-                record=record,
-                sim_id=f"mc_{config.name}_paired_grid",
-                main_selection=config.paired_grid.main_selection,
-                full_factorial=config.paired_grid.full_factorial,
-            )
-            out["paired_grid"] = {
-                "slots": paired["slots"],
-                "mode": paired["mode"],
-                "combinations": paired["combinations"],
-                "main_selection": paired["main_selection"],
-                "excluded_variants": paired["excluded_variants"],
-                "failed_iterations": paired["failed_iterations"],
-                "farm_indicators_stats": paired["farm_indicators_stats"],
-                "paired_differences_stats": (
-                    paired["paired_differences_stats"]
-                ),
-                "n_rows": len(paired["emissions_table"]),
-            }
-        except ValueError as exc:
-            out["paired_grid"] = f"skipped: {exc}"
     return out
