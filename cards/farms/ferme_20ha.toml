@@ -19,15 +19,19 @@ farm_id = "ferme_cas_etude_20ha"
 # purchases below.
 avg_temp = 11.0
 mature_weight = 700.0
-manure_exported = 0.0
 
 # Solid manure / slurry (liquid manure) ratio of the HOUSED
-# excretions (the pasture share is derived from the grazing events).
-# This farm stores solid manure only; the slurry pathway is not yet
-# implemented in the engine and must be 0.0.
+# excretions (the pasture share is derived from the grazing events),
+# and manure exports: fresh (exported BEFORE storage — skips the farm
+# storage emissions, off-farm scope) and stored (exported AFTER the
+# storage losses, before spreading — the storage emissions stay at
+# the farm). This farm keeps everything; the slurry pathway is not
+# yet implemented and must be 0.0.
 [farm.manure_split]
 solid_storage = 1.0
 liquid_slurry = 0.0
+manure_exported_fresh = 0.0
+manure_exported_stored = 0.0
 
 [farm.purchases]
 # Purchased young animals: count and live weight; the engine derives

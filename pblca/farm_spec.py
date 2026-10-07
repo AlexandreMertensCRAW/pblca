@@ -188,7 +188,10 @@ class FarmSpec:
         ``n_calves_purchased`` and ``calf_purchased_bw_kg``.)
         manure_split: share of excretions per management system
             (e.g. {"pasture": 0.45, "solid_storage": 0.55}).
-        manure_exported: share of stored manure exported off-farm.
+        manure_exported_fresh: share of the housed excretions exported
+            before storage (no farm storage emissions on that share).
+        manure_exported_stored: share of the stored manure exported
+            off-farm after the storage losses (before spreading).
         avg_temp: mean annual temperature (°C) — MCF of manure systems.
         mature_weight: mature liveweight of the animals (kg, IPCC
             Eq. 10.6 MW); breed-dependent.
@@ -199,7 +202,8 @@ class FarmSpec:
     parcels: List[ParcelSpec]
     purchases: Dict[str, float]
     manure_split: Dict[str, float]
-    manure_exported: float = 0.0
+    manure_exported_fresh: float = 0.0
+    manure_exported_stored: float = 0.0
     avg_temp: float = 10.0
     mature_weight: float = 700.0
 
@@ -391,7 +395,8 @@ def build_farm(
         parcels=parcels,
         purchases=purchases,
         manure_split=dict(spec.manure_split),
-        manure_exported=spec.manure_exported,
+        manure_exported_fresh=spec.manure_exported_fresh,
+        manure_exported_stored=spec.manure_exported_stored,
         avg_temp=spec.avg_temp,
         mature_weight=spec.mature_weight,
         parcel_grazing_days=parcel_grazing_days or None,

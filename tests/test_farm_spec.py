@@ -397,3 +397,76 @@ class TestDatedFertilisations:
                     ),
                 ],
             ))
+
+
+class TestManureExports:
+    """Fresh export (before storage) vs stored export (after storage):
+    two physically distinct off-farm flows."""
+
+    def _engine_run(self, spec):
+        from pblca.engine import LCAEngine
+
+        engine = LCAEngine(datastore_path="/tmp/test_exports.json")
+        farm = build_farm(spec, engine.params)
+        return engine.run(farm, record=False), engine
+
+    def test_fresh_export_skips_storage_emissions(self):
+        """With 100 % fresh export, the housed excretions never enter
+        the storage: no solid-storage CH4 and no stored manure
+        available for spreading."""
+        from dataclasses import replace
+
+        spec = _minimal_spec(
+            parcels=[ParcelSpec(key="maize", crop="mais", area=10.0,
+                                deep_tillage=True)],
+        )
+        base, _ = self._engine_run(spec)
+        exported = replace(spec, manure_exported_fresh=1.0)
+        run, _ = self._engine_run(exported)
+        ch4_base = base.model_outputs["manure_ch4"]["trace"]["systems"]
+        ch4_exp = run.model_outputs["manure_ch4"]["trace"]["systems"]
+        assert ch4_exp.get("solid_storage", 0.0) == 0.0
+        assert ch4_exp.get("exported_fresh", 0.0) > 0.0
+        assert ch4_base.get("solid_storage", 0.0) > 0.0
+        n2o = run.model_outputs["manure_n2o"]["fluxes"]
+        assert n2o["n_organic_available"] == 0.0
+
+    def test_stored_export_keeps_storage_emissions(self):
+        """With 100 % stored export, the storage emissions stay at the
+        farm (same solid-storage CH4 as without export) but nothing
+        remains available for spreading."""
+        from dataclasses import replace
+
+        spec = _minimal_spec(
+            parcels=[ParcelSpec(key="maize", crop="mais", area=10.0,
+                                deep_tillage=True)],
+        )
+        base, _ = self._engine_run(spec)
+        exported = replace(spec, manure_exported_stored=1.0)
+        run, _ = self._engine_run(exported)
+        ch4_base = base.model_outputs["manure_ch4"]["trace"]["systems"]
+        ch4_exp = run.model_outputs["manure_ch4"]["trace"]["systems"]
+        assert ch4_exp.get("solid_storage", 0.0) == pytest.approx(
+            ch4_base.get("solid_storage", 0.0)
+        )
+        n2o = run.model_outputs["manure_n2o"]["fluxes"]
+        assert n2o["n_organic_available"] == 0.0
+        assert n2o["n_prp_total"] == pytest.approx(
+            base.model_outputs["manure_n2o"]["fluxes"]["n_prp_total"]
+        )
+
+    def test_partial_export_scales_linearly(self):
+        from dataclasses import replace
+
+        spec = _minimal_spec(
+            parcels=[ParcelSpec(key="maize", crop="mais", area=10.0,
+                                deep_tillage=True)],
+        )
+        base, _ = self._engine_run(spec)
+        exported = replace(spec, manure_exported_stored=0.5)
+        run, _ = self._engine_run(exported)
+        n2o_base = base.model_outputs["manure_n2o"]["fluxes"]
+        n2o_exp = run.model_outputs["manure_n2o"]["fluxes"]
+        assert n2o_exp["n_organic_available"] == pytest.approx(
+            0.5 * n2o_base["n_organic_available"]
+        )

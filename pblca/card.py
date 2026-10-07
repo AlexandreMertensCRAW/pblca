@@ -48,7 +48,12 @@ The inline farm mirrors :class:`pblca.farm_spec.FarmSpec`:
     farm_id = "ma_ferme"
     avg_temp = 11.0
     mature_weight = 700.0
-    manure_exported = 0.0
+
+    [farm.manure_split]
+    solid_storage = 1.0
+    liquid_slurry = 0.0
+    manure_exported_fresh = 0.0
+    manure_exported_stored = 0.0
 
     [farm.purchases]
     concentrate_kg_dm = 15000.0
@@ -219,16 +224,41 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
             "grazing events; declare only the HOUSED systems "
             "(solid_storage, liquid_slurry)"
         )
+    manure_split = dict(manure_split)
+    fresh = manure_split.pop("manure_exported_fresh", 0.0)
+    stored = manure_split.pop("manure_exported_stored", 0.0)
+    for name, value in (("manure_exported_fresh", fresh),
+                        ("manure_exported_stored", stored)):
+        if not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
+            raise CardError(
+                f"[farm.manure_split]: '{name}' must be a fraction "
+                "in [0, 1]"
+            )
     unknown_systems = sorted(set(manure_split) - {"solid_storage", "liquid_slurry"})
     if unknown_systems:
         raise CardError(
             f"[farm.manure_split]: unknown system(s) {unknown_systems} "
-            "(accepted: solid_storage, liquid_slurry)"
+            "(accepted: solid_storage, liquid_slurry, manure_exported_fresh, "
+            "manure_exported_stored)"
         )
     if manure_split.get("liquid_slurry", 0.0) > 0:
         raise CardError(
             "[farm.manure_split]: the liquid slurry pathway is not yet "
             "implemented (no sourced MCF/EF3 parameters); it must be 0.0"
+        )
+    total_share = sum(manure_split.values()) + fresh
+    if total_share > 1.0 + 1e-9:
+        raise CardError(
+            "[farm.manure_split]: solid_storage + liquid_slurry + "
+            "manure_exported_fresh exceeds 1.0 (the fresh export is a "
+            "diversion of the housed excretions away from the storage "
+            "systems)"
+        )
+    if "manure_exported" in data:
+        raise CardError(
+            "[farm]: 'manure_exported' moved to [farm.manure_split] — "
+            "declare 'manure_exported_fresh' (before storage) or "
+            "'manure_exported_stored' (after storage)"
         )
     if not isinstance(animals_data, list) or not animals_data:
         raise CardError("[farm]: 'animals' must be a non-empty list")
@@ -288,7 +318,8 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
         parcels=parcels,
         purchases=dict(purchases),
         manure_split=dict(manure_split),
-        manure_exported=base.manure_exported,
+        manure_exported_fresh=fresh,
+        manure_exported_stored=stored,
         avg_temp=base.avg_temp,
         mature_weight=base.mature_weight,
     )

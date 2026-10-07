@@ -222,7 +222,12 @@ class FarmContext:
             group ({parcel_key: {group_key: days}}), derived from the
             grazing events by the farm builder; the manure module
             routes the deposited nitrogen to the parcels with it.
-        manure_exported: share of stored manure exported off-farm.
+        manure_exported_fresh: share of the HOUSED excretions exported
+            BEFORE storage (fresh manure sold/given away: skips the farm
+            storage emissions entirely — off-farm scope).
+        manure_exported_stored: share of the STORED manure (after the
+            storage losses) exported off-farm before spreading (compost,
+            sold manure: the storage emissions stay at the farm).
         avg_temp: mean annual temperature (°C) — MCF.
         mature_weight: mature liveweight of the animals (kg) used by
             the IPCC energy chain (Eq. 10.6, MW of the NEg equation);
@@ -234,7 +239,8 @@ class FarmContext:
     parcels: List[LandParcel]
     purchases: Dict[str, float]
     manure_split: Dict[str, float]
-    manure_exported: float = 0.0
+    manure_exported_fresh: float = 0.0
+    manure_exported_stored: float = 0.0
     avg_temp: float = 10.0
     mature_weight: float = 700.0
     parcel_grazing_days: Optional[Dict[str, Dict[str, float]]] = None

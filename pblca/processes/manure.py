@@ -86,8 +86,11 @@ def manure_ch4(ctx: ModelContext) -> ModelResult:
         g = groups[key]
         vs_year = fl["vs_kg_day"] * 365.0  # kg VS/head/yr
         # Per-group split derived from the grazing events (the farm
-        # manure_split now applies to the HOUSED excretions only).
+        # manure_split applies to the HOUSED excretions only). The
+        # fresh manure exported BEFORE storage skips the farm storage
+        # emissions entirely (off-farm scope).
         housed_share = 1.0 - g.grazing
+        fresh_export = ctx.farm.manure_exported_fresh
         systems = {"pasture": g.grazing}
         for system, share in ctx.farm.manure_split.items():
             if system == "pasture":
@@ -97,7 +100,7 @@ def manure_ch4(ctx: ModelContext) -> ModelResult:
                     "events; the declared share is ignored",
                 )
                 continue
-            systems[system] = housed_share * share
+            systems[system] = housed_share * share * (1.0 - fresh_export)
         for system, share in systems.items():
             if share == 0:
                 continue
@@ -113,6 +116,12 @@ def manure_ch4(ctx: ModelContext) -> ModelResult:
             res.trace["systems"].setdefault(system, 0.0)
             res.trace["systems"][system] += ch4
             total += ch4
+        if fresh_export > 0:
+            res.trace["systems"].setdefault("exported_fresh", 0.0)
+            res.trace["systems"]["exported_fresh"] += (
+                vs_year * v("bo_cattle_manure") * housed_share
+                * fresh_export * g.n_head
+            )  # VS exported off-farm, no farm-side MCF (trace only)
     res.ch4_kg = total
     res.fluxes["vs_total_kg"] = sum(
         fl["vs_kg_day"] * 365.0 * next(a.n_head for a in ctx.farm.animals if a.key == k)
@@ -151,8 +160,11 @@ def manure_n2o(ctx: ModelContext) -> ModelResult:
         n_head = g.n_head
         nex_year = fl["n_excreta_kg_day"] * 365.0 * n_head  # kg N/yr
         # Per-group split derived from the grazing events (the farm
-        # manure_split applies to the HOUSED excretions only).
+        # manure_split applies to the HOUSED excretions only). Fresh
+        # manure exported BEFORE storage never enters the farm storage
+        # systems (no EF3/volatilisation on the exported share).
         housed_share = 1.0 - g.grazing
+        fresh_export = ctx.farm.manure_exported_fresh
         systems = {"pasture": g.grazing}
         for system, share in ctx.farm.manure_split.items():
             if system == "pasture":
@@ -162,7 +174,7 @@ def manure_n2o(ctx: ModelContext) -> ModelResult:
                     "events; the declared share is ignored",
                 )
                 continue
-            systems[system] = housed_share * share
+            systems[system] = housed_share * share * (1.0 - fresh_export)
         for system, share in systems.items():
             if share == 0:
                 continue
@@ -200,9 +212,13 @@ def manure_n2o(ctx: ModelContext) -> ModelResult:
                 leach = nex_s * v("frac_leachms_solid")
                 ind = volat * v("ef4_deposition") + leach * v("ef5_leaching")
                 direct = nex_s * ef3
-                # Stored manure later spread: nitrogen remaining after losses
-                n_stored = nex_s * (1.0 - ctx.farm.manure_exported)
-                n_available += n_stored - volat - leach
+                # Stored manure: nitrogen remaining after the storage
+                # losses. The share exported AFTER storage (compost,
+                # sold manure) leaves the farm before spreading.
+                n_remaining = nex_s - volat - leach
+                n_available += n_remaining * (
+                    1.0 - ctx.farm.manure_exported_stored
+                )
             else:
                 ctx.logger.error("manure_n2o", f"Unknown manure system: {system}")
                 continue
