@@ -63,6 +63,46 @@ mc = engine.run_monte_carlo(farm, n_iterations=500, seed=2024)
 engine.datastore.save("results.json")
 ```
 
+## Card d'étude déclarative (TOML) et CLI
+
+Une étude complète (ferme, variantes de modèles, plan Monte-Carlo,
+sortie) se décrit dans **un seul fichier TOML** — la « card », sur le
+modèle des frameworks de simulation rapide : zéro code utilisateur.
+
+```bash
+pblca run cards/ferme_20ha.toml          # exécute l'étude décrite par la card
+pblca slots                              # slots + variantes disponibles
+pblca slots --slot enteric_ch4           # variantes d'un slot
+pblca farms                              # fermes intégrées utilisables
+```
+
+Structure d'une card (voir `cards/ferme_20ha.toml`) :
+
+```toml
+[study]
+name = "ferme_20ha"
+farm = "ferme_20ha"        # ferme intégrée, ou [farm] complet en ligne
+
+[model_selection]           # variantes du run central
+enteric_ch4 = "tier2_2006_modelled_ingestion"
+
+[variant_grid]             # sweeps mono-slot (run central + Monte-Carlo)
+enteric_ch4 = ["tier2_2006_modelled_ingestion", "tier3_mills_modelled_ingestion"]
+
+[monte_carlo]
+n_iterations = 500
+seed = 2024
+
+[datastore]
+path = "results.json"
+```
+
+La card est validée au chargement (slot/variante inconnus → erreur
+explicite immédiate). Le fichier de résultats embarque la card
+(hachage SHA-256 + texte brut) : chaque étude reste traçable et
+reproductible (ISO 14044 §4.5). Les variantes exigeant des mesures que
+la ferme ne possède pas sont automatiquement exclues (avec avertissement).
+
 ## Documentation auto-générée
 
 ```bash
