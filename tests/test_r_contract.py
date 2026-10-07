@@ -316,3 +316,79 @@ class TestDataStoreArchive:
         store = DataStore(str(tmp_path / "results.json"))
         assert len(store) == 0
         assert not (tmp_path / "results_archive").exists()
+
+
+class TestPairedGridContract:
+    """Keys read by analyse_paired_grid.R (multi-slot paired grid)."""
+
+    def _full_results_paired(self, tmp_path):
+        from pblca.scenarios import PairedGridConfig
+
+        results_path = str(tmp_path / "results.json")
+        engine = LCAEngine(datastore_path=results_path)
+        farm = build_case_study_farm(engine.params)
+        diet = {
+            "veaux_0_6mois": (0.91, 0.72),
+            "jeunes_6_12mois": (0.91, 0.67),
+            "engraissés_12_21mois": (0.91, 0.64),
+        }
+        for a in farm.animals:
+            a.diet_om, a.diet_omd = diet[a.key]
+        config = CaseStudyConfig(
+            name="contract",
+            farm_builder=lambda params: farm,
+            mc=NumericalOptions(n_iterations=10, seed=2024),
+            paired_grid=PairedGridConfig(
+                slots={
+                    "enteric_ch4": [
+                        "tier2_2006_modelled_ingestion",
+                        "tier3_mills_modelled_ingestion",
+                    ],
+                    "manure_ch4": ["ipcc_tier2", "tier3_eugene2019"],
+                },
+                full_factorial=True,
+            ),
+        )
+        run_case_study(engine, config, record=True)
+        engine.datastore.save()
+        with open(results_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_paired_grid_entry(self, tmp_path):
+        results = self._full_results_paired(tmp_path)
+        entries = [
+            e for e in results["simulations"]
+            if "uncertainty" in e
+            and "combinations" in e["uncertainty"]
+            and "emissions_table" in e["uncertainty"]
+        ]
+        assert entries, "no paired-grid entry in results.json"
+        u = entries[-1]["uncertainty"]
+        # Structural keys dereferenced by the R script.
+        for key in ("parameter_draws_table", "slots", "main_selection",
+                    "mode", "central_gwp_factors", "source_gas_columns"):
+            assert key in u, f"missing uncertainty.{key}"
+        slot_names = list(u["slots"])
+        assert len(slot_names) == 2
+        assert u["mode"] == "full_factorial"
+        # Full factorial: one column per combination of the variants.
+        expected = {
+            f"enteric_ch4={e},manure_ch4={m}"
+            for e in u["slots"]["enteric_ch4"]
+            for m in u["slots"]["manure_ch4"]
+        }
+        assert set(u["combinations"]) == expected
+        # Rectangular emissions table: iteration + one column per
+        # combination and indicator + the source x gas columns.
+        indicators = ("gwp100", "gwp20", "gwpstar",
+                      "ch4_kg", "co2_kg", "n2o_kg")
+        for row in u["emissions_table"]:
+            expected_keys = {"iteration"}
+            for label in u["combinations"]:
+                for k in indicators:
+                    expected_keys.add(f"{label}__{k}")
+            expected_keys |= set(u["source_gas_columns"])
+            assert set(row) == expected_keys, "unpaired emissions row"
+        # main_selection: one runnable variant per swept slot.
+        for slot in slot_names:
+            assert u["main_selection"][slot] in u["slots"][slot]

@@ -117,6 +117,35 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   ```bash
   Rscript R/plot_ration_comparison_correlation.R results.json
   ```
+- `analyse_paired_grid.R` — reads the multi-slot paired-grid entry
+  (`sim_id = "mc_<case>_paired_grid"`, written by step 5 of
+  `run_case_study` / `run_paired_grid`: one Monte-Carlo parameter
+  draw per iteration, shared by every swept column of the grid) and:
+  - exports the emissions table (one row per iteration, one flat
+    `<slot>=<variant>__<indicator>` column per combination of the
+    grid) and the parameter-draws table as CSV;
+  - computes the Pearson and Spearman correlations between every
+    parameter and the GWP100 of every column (long-form CSV with the
+    `error_type` inventory/characterisation split);
+  - computes the PAIRED DIFFERENCE of every swept alternative
+    against the reference selection (`main_selection`), per slot and
+    per indicator: the pure effect of each model choice on the farm
+    result (CSV + forest plot on gwp100);
+  - decomposes the variance of the farm GWP100 between the model
+    CHOICES (per swept slot) and the paired parameter draws; with
+    two swept slots in full factorial (`full_factorial = true`),
+    the slot INTERACTION is identified (does the effect of one
+    choice depend on the other? — CSV + interaction plot). In
+    one-factor mode the decomposition is additive and a warning
+    explains what to declare to identify the interaction.
+  ```bash
+  Rscript R/analyse_paired_grid.R results.json [output_dir]
+  ```
+  Output: `paired_grid_emissions.csv`,
+  `paired_grid_parameter_draws.csv`, `paired_grid_correlation.csv`,
+  `paired_grid_model_effect.csv`, `paired_grid_variance_share.csv`,
+  `fig_effet_slots_gwp100.png`,
+  `fig_interaction_slots_gwp100.png` (in `R/` by default).
 
 ## Dependencies
 
