@@ -331,7 +331,7 @@ en français.
 2. les rations mesurées sont perturbées (un facteur log-normal par groupe
    appliqué à DMI et GE, un par méthode de CH₄ mesuré) — *les mêmes
    mesures perturbées pour toutes les variantes*, donc l'appariement tient
-   aussi pour les variantes `*_ingestion_measured` et `measured_ahcs` ;
+   aussi pour les variantes `*_measured_ingestion` et `measured_ahcs` ;
 3. chaque variante est évaluée avec ce tirage commun et ses indicateurs
    remplissent la ligne.
 

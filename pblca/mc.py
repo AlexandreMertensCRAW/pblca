@@ -419,10 +419,10 @@ def run_ration_comparison(
         suffix = (
             "_modelled_ingestion"
             if mode == "ipcc_equations"
-            else "_ingestion_measured"
+            else "_measured_ingestion"
         )
         base = enteric
-        for tail in ("_modelled_ingestion", "_ingestion_measured"):
+        for tail in ("_modelled_ingestion", "_measured_ingestion"):
             if base.endswith(tail):
                 base = base[: -len(tail)]
                 break
@@ -613,7 +613,7 @@ def run_paired_grid(
     ``run_monte_carlo`` (one lognormal factor per group, applied to
     both DMI and GE, plus one factor per measured-CH4 method): all
     columns see the SAME perturbed measurements, so the pairing
-    holds for the ``_ingestion_measured`` and ``measured_*``
+    holds for the ``_measured_ingestion`` and ``measured_*``
     variants too.
 
     Two modes:

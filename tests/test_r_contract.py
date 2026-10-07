@@ -59,7 +59,7 @@ def _full_results(tmp_path):
         variant_grid={
             "enteric_ch4": [
                 "tier2_2006_modelled_ingestion",
-                "tier2_2006_ingestion_measured",
+                "tier2_2006_measured_ingestion",
                 "measured_ahcs",
             ],
             "manure_ch4": ["ipcc_tier2", "tier3_eugene2019"],

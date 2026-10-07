@@ -32,15 +32,15 @@ fieldwork = "fuel_ademe"                           # fieldwork fuel
 [variant_grid]
 enteric_ch4 = [
     "tier2_2006_modelled_ingestion",
-    "tier2_2006_ingestion_measured",
+    "tier2_2006_measured_ingestion",
     "tier2_2019_modelled_ingestion",
-    "tier2_2019_ingestion_measured",
+    "tier2_2019_measured_ingestion",
     "tier2_fao_ym_modelled_ingestion",
-    "tier2_fao_ym_ingestion_measured",
+    "tier2_fao_ym_measured_ingestion",
     "tier3_mills_modelled_ingestion",
-    "tier3_mills_ingestion_measured",
+    "tier3_mills_measured_ingestion",
     "tier3_sauvant2011_modelled_ingestion",
-    "tier3_sauvant2011_ingestion_measured",
+    "tier3_sauvant2011_measured_ingestion",
     "measured_ahcs",
 ]
 manure_ch4 = ["ipcc_tier2", "tier3_eugene2019"]
@@ -52,7 +52,7 @@ manure_ch4 = ["ipcc_tier2", "tier3_eugene2019"]
 inra_tier3 = { enteric_ch4 = "tier3_sauvant2011_modelled_ingestion", manure_ch4 = "tier3_eugene2019" }
 # Same chain on the measured rations (ration sheets + GreenFeed
 # monitoring of this farm).
-inra_tier3_ingestion_measured = { enteric_ch4 = "tier3_sauvant2011_ingestion_measured", manure_ch4 = "tier3_eugene2019" }
+inra_tier3_measured_ingestion = { enteric_ch4 = "tier3_sauvant2011_measured_ingestion", manure_ch4 = "tier3_eugene2019" }
 
 [monte_carlo]
 n_iterations = 500

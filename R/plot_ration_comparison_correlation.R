@@ -3,7 +3,7 @@
 # Correlation between the paired Monte-Carlo draws of the two
 # ration-definition modes of the enteric CH4:
 #   x = tier2_2006_modelled_ingestion (IPCC energy chain)
-#   y = tier2_2006_ingestion_measured (on-farm measured DMI)
+#   y = tier2_2006_measured_ingestion (on-farm measured DMI)
 #
 # Both evaluations of an iteration share the same parameter draw
 # (same Ym, same emission factors, same farm data), so the scatter

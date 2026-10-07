@@ -1425,10 +1425,10 @@ class TestIngestionExplicitVariants:
         for base in ("tier2_2006", "tier2_2019", "tier2_fao_ym",
                      "tier3_mills", "tier3_sauvant2011"):
             assert f"{base}_modelled_ingestion" in variants
-            assert f"{base}_ingestion_measured" in variants
+            assert f"{base}_measured_ingestion" in variants
             # Measured version requires dmi_measured (+ INRA fields
             # for Sauvant).
-            spec_m = reg.get("enteric_ch4", f"{base}_ingestion_measured")
+            spec_m = reg.get("enteric_ch4", f"{base}_measured_ingestion")
             assert "dmi_measured" in spec_m.required_group_fields
         # measured_ahcs is not doubled (bypasses the ration chain).
         assert "measured_ahcs_modelled_ingestion" not in variants
@@ -1443,7 +1443,7 @@ class TestIngestionExplicitVariants:
             a.ge_measured = None
         r = engine.run(
             farm,
-            model_selection={"enteric_ch4": "tier2_2006_ingestion_measured"},
+            model_selection={"enteric_ch4": "tier2_2006_measured_ingestion"},
             record=False,
         )
         tr = r.model_outputs["enteric_ch4"]["trace"]["per_group"]
@@ -1482,7 +1482,7 @@ class TestIngestionExplicitVariants:
         assert len(warns) == len(farm.animals)
 
     def test_measured_variant_excluded_without_dmi(self, engine):
-        # No measurement: the grid excludes the ingestion_measured
+        # No measurement: the grid excludes the measured_ingestion
         # variants automatically.
         from pblca.scenarios import CaseStudyConfig, run_scenario_grid
 
@@ -1493,19 +1493,19 @@ class TestIngestionExplicitVariants:
             variant_grid={
                 "enteric_ch4": [
                     "tier2_2006_modelled_ingestion",
-                    "tier2_2006_ingestion_measured",
+                    "tier2_2006_measured_ingestion",
                 ],
             },
         )
         records = run_scenario_grid(engine, config, record=True)
         by_variant = {r.model_selection["enteric_ch4"]: r for r in records}
         assert not by_variant["tier2_2006_modelled_ingestion"].excluded
-        assert by_variant["tier2_2006_ingestion_measured"].excluded
+        assert by_variant["tier2_2006_measured_ingestion"].excluded
         assert "dmi_measured" in by_variant[
-            "tier2_2006_ingestion_measured"
+            "tier2_2006_measured_ingestion"
         ].reason
 
-    def test_mc_per_group_stats_ingestion_measured(self, engine):
+    def test_mc_per_group_stats_measured_ingestion(self, engine):
         farm = build_case_study_farm(engine.params)
         dmi = {"veaux_0_6mois": 4.2, "jeunes_6_12mois": 7.4,
                "engraissés_12_21mois": 10.2}
@@ -1514,7 +1514,7 @@ class TestIngestionExplicitVariants:
             a.ration_rel_sd = 0.10
         mc = engine.run_monte_carlo(
             farm, n_iterations=20, seed=11,
-            model_selection={"enteric_ch4": "tier2_2006_ingestion_measured"},
+            model_selection={"enteric_ch4": "tier2_2006_measured_ingestion"},
             record=False,
         )
         groups = mc["enteric_ch4_per_group_kg"]
@@ -1566,7 +1566,7 @@ class TestPairedVariantGrid:
             a.ge_measured = 7.0 * 18.45
         variants = [
             "tier2_2006_modelled_ingestion",
-            "tier2_2006_ingestion_measured",
+            "tier2_2006_measured_ingestion",
             "tier3_mills_modelled_ingestion",
         ]
         out = engine.run_paired_variant_grid(
@@ -1605,7 +1605,7 @@ class TestPairedVariantGrid:
             a.dmi_measured = 7.0
             a.ge_measured = 7.0 * 18.45
         main = "tier2_2006_modelled_ingestion"
-        alts = ["tier2_2006_ingestion_measured",
+        alts = ["tier2_2006_measured_ingestion",
                 "tier3_mills_modelled_ingestion"]
         out = engine.run_paired_variant_grid(
             farm, variants=[main, *alts], n_iterations=15, seed=7,
@@ -1641,7 +1641,7 @@ class TestPairedVariantGrid:
         for a in farm.animals:
             a.dmi_measured = 7.0
             a.ge_measured = 7.0 * 18.45
-        v = ["tier2_2006_modelled_ingestion", "tier2_2006_ingestion_measured"]
+        v = ["tier2_2006_modelled_ingestion", "tier2_2006_measured_ingestion"]
         c1 = engine.run_paired_variant_grid(
             farm, variants=v, n_iterations=10, seed=3, record=False
         )
@@ -1661,7 +1661,7 @@ class TestPairedVariantGrid:
         engine.run_paired_variant_grid(
             farm,
             variants=["tier2_2006_modelled_ingestion",
-                      "tier2_2006_ingestion_measured"],
+                      "tier2_2006_measured_ingestion"],
             n_iterations=5,
             seed=1,
             record=False,
@@ -1680,14 +1680,14 @@ class TestPairedVariantGrid:
         out = engine.run_paired_variant_grid(
             farm,
             variants=["tier2_2006_modelled_ingestion",
-                      "tier2_2006_ingestion_measured"],
+                      "tier2_2006_measured_ingestion"],
             n_iterations=60,
             seed=9,
             record=False,
         )
         x = [r["tier2_2006_modelled_ingestion__ch4_kg"]
              for r in out["emissions_table"]]
-        y = [r["tier2_2006_ingestion_measured__ch4_kg"]
+        y = [r["tier2_2006_measured_ingestion__ch4_kg"]
              for r in out["emissions_table"]]
         mx, my = sum(x) / len(x), sum(y) / len(y)
         cov = sum((a - mx) * (b - my) for a, b in zip(x, y))

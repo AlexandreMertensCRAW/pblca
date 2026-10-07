@@ -109,7 +109,7 @@ Post-processing and plotting of the JSON outputs of the PBLCA engine.
   per farm total, for both ration modes) and scatter-plots the
   draws of the same Monte-Carlo iteration: x = IPCC energy chain
   (`tier2_2006_modelled_ingestion`), y = measured ration
-  (`tier2_2006_ingestion_measured`), one facet per group with the
+  (`tier2_2006_measured_ingestion`), one facet per group with the
   Pearson correlation coefficient and the 1:1 line. Shows how much
   of the uncertainty is common to the two chains.
   Output: `R/fig_correlation_rations.png`.

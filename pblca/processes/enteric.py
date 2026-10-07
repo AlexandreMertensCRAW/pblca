@@ -185,7 +185,7 @@ def _energy_chain(
     """Gross energy intake and DMI of an animal group.
 
     Ration-definition modes (the enteric variants exist in a
-    ``_modelled_ingestion`` and an ``_ingestion_measured`` version;
+    ``_modelled_ingestion`` and an ``_measured_ingestion`` version;
     ``auto`` keeps the historical behaviour for the generic ration
     comparison):
 
@@ -235,17 +235,17 @@ def _energy_chain(
             ctx.logger.error(
                 "enteric",
                 f"dmi_measured is required for group {g.key} "
-                f"(ingestion_measured variant)",
+                f"(measured_ingestion variant)",
             )
             raise ValueError(
                 f"dmi_measured missing for group {g.key} "
-                f"(ingestion_measured variant)"
+                f"(measured_ingestion variant)"
             )
         if g.ge_measured is not None and g.dmi_measured is not None:
             ctx.logger.warn(
                 "enteric",
                 f"ge_measured of group {g.key} is IGNORED: the "
-                f"ingestion_measured variants derive GE = DMI x "
+                f"measured_ingestion variants derive GE = DMI x "
                 f"diet energy density",
             )
         if dmi is not None and dmi <= 0:
@@ -330,7 +330,7 @@ def _with_ingestion_mode(base_func, ingestion_mode: str):
     * ``<base>_modelled_ingestion``: IPCC energy chain (Eq. 10.3 to
       10.16); measured intakes set on the groups are IGNORED with a
       warning.
-    * ``<base>_ingestion_measured``: on-farm measured DMI (required
+    * ``<base>_measured_ingestion``: on-farm measured DMI (required
       on every group); GE is derived as DMI x diet energy density.
 
     The wrapped function passes ``ingestion_mode`` through to the
@@ -752,7 +752,7 @@ SPECS = [
 # modelled-ingestion version (backward compatibility).
 _INGESTION_SUFFIX = {
     "modelled": "_modelled_ingestion",
-    "measured": "_ingestion_measured",
+    "measured": "_measured_ingestion",
 }
 # Equations relying on the ration chain (measured_ahcs bypasses it).
 _CHAIN_EQUATIONS = {
