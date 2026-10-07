@@ -28,7 +28,11 @@ Once the changes are implemented and tested:
 
 1. the agent presents a summary (commit, modified files, tests
    run, results);
-2. the agent waits for the user's explicit agreement;
+2. the agent waits for the user's explicit agreement — for THAT
+   push specifically. A prior agreement (e.g. "you can push to
+   main") never carries over to later commits, branches or
+   sessions: every push needs its own validation, with no
+   exception;
 3. only then pushes to GitHub.
 
 ## Repository conventions
