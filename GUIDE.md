@@ -88,9 +88,15 @@ les rations mesurées ; les processus restent des évaluateurs purs.
 **Une étude = une paire de cartes TOML** (déclaratif, rien à coder) :
 
 1. **La carte ferme** — `cards/farms/ferme_20ha.toml` : la ferme
-   complète (troupeau, parcelles, achats, gestion fumier) ET les
-   mesures on-farm (AHCS GreenFeed, rations, dMO/dMOd) déclarées sur
-   le groupe animal auquel elles appartiennent ;
+   complète (troupeau, parcelles, achats) ET les mesures on-farm
+   (AHCS GreenFeed, rations, dMO/dMOd) déclarées sur le groupe animal
+   auquel elles appartiennent, ET la gestion par **événements datés** :
+   pâturage (`[[farm.parcels.grazing]]` : lot + dates — la part
+   pâturage du fumier en est dérivée, le N déposé est routé vers la
+   parcelle) et fertilisations minérale/organique
+   (`[[farm.parcels.synthetic_fertilisation]]` /
+   `[[farm.parcels.organic_fertilisation]]` : vecteurs `date` + `n_kg`,
+   plusieurs apports/an) ;
 2. **La carte étude** — `cards/studies/ferme_20ha.toml` : les choix
    de modélisation (voir ci-dessous).
 

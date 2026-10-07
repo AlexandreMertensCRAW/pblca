@@ -85,7 +85,14 @@ import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from .farm_spec import AnimalGroupSpec, FarmSpec, ParcelSpec
+from .farm_spec import (
+    AnimalGroupSpec,
+    FarmSpec,
+    GrazingEventSpec,
+    OrganicFertilisationSpec,
+    ParcelSpec,
+    SyntheticFertilisationSpec,
+)
 from .params import ParameterSet
 from .registry import ModelRegistry, build_default_registry
 from .scenarios import CaseStudyConfig, NumericalOptions
@@ -219,10 +226,40 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
                 "(average annual headcount, > 0)"
             )
         animals.append(group)
-    parcels = [
-        _from_dataclass_dict(ParcelSpec, p, f"[[farm.parcels]] #{i}")
-        for i, p in enumerate(parcels_data)
-    ]
+    parcels = []
+    for i, p in enumerate(parcels_data):
+        p = dict(p)
+        grazing_data = p.pop("grazing", None) or []
+        organic_data = p.pop("organic_fertilisation", None) or []
+        synthetic_data = p.pop("synthetic_fertilisation", None) or []
+        parcel = _from_dataclass_dict(ParcelSpec, p, f"[[farm.parcels]] #{i}")
+        if "n_synthetic" in p:
+            raise CardError(
+                f"[[farm.parcels]] #{i}: 'n_synthetic' is replaced by the "
+                "dated [[farm.parcels.synthetic_fertilisation]] events"
+            )
+        parcel.grazing = [
+            _from_dataclass_dict(
+                GrazingEventSpec, ev,
+                f"[[farm.parcels]] #{i} grazing event #{j}",
+            )
+            for j, ev in enumerate(grazing_data)
+        ]
+        parcel.organic_fertilisation = [
+            _from_dataclass_dict(
+                OrganicFertilisationSpec, f,
+                f"[[farm.parcels]] #{i} organic fertilisation #{j}",
+            )
+            for j, f in enumerate(organic_data)
+        ]
+        parcel.synthetic_fertilisation = [
+            _from_dataclass_dict(
+                SyntheticFertilisationSpec, f,
+                f"[[farm.parcels]] #{i} synthetic fertilisation #{j}",
+            )
+            for j, f in enumerate(synthetic_data)
+        ]
+        parcels.append(parcel)
     base = _from_dataclass_dict(
         FarmSpec,
         dict(data, animals=[], parcels=[], purchases={}, manure_split={}),

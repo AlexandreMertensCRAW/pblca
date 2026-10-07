@@ -215,8 +215,13 @@ class FarmContext:
         animals: animal groups (age classes).
         parcels: land parcels.
         purchases: annual purchased inputs.
-        manure_split: share of manure per management system
-            (e.g. {"solid_storage": 0.55, "pasture": 0.45}).
+        manure_split: share of the HOUSED excretions per management
+            system (e.g. {"solid_storage": 1.0}); the pasture share is
+            derived from the grazing events, not declared here.
+        parcel_grazing_days: days at pasture per parcel, per animal
+            group ({parcel_key: {group_key: days}}), derived from the
+            grazing events by the farm builder; the manure module
+            routes the deposited nitrogen to the parcels with it.
         manure_exported: share of stored manure exported off-farm.
         avg_temp: mean annual temperature (°C) — MCF.
         mature_weight: mature liveweight of the animals (kg) used by
@@ -232,6 +237,7 @@ class FarmContext:
     manure_exported: float = 0.0
     avg_temp: float = 10.0
     mature_weight: float = 700.0
+    parcel_grazing_days: Optional[Dict[str, Dict[str, float]]] = None
 
 
 @dataclass

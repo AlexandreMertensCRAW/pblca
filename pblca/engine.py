@@ -179,21 +179,6 @@ class DataStore:
         return len(self._entries)
 
 
-def _distribute_manure_n(farm: FarmContext, n_organic_total: float) -> None:
-    """Distribute the spread organic nitrogen (kg N/yr) over the parcels.
-
-    Distribution proportional to the area eligible for spreading
-    (cropland parcels and temporary grasslands, excluding permanent
-    grassland whose deposits are already accounted at pasture).
-    """
-    eligible = [p for p in farm.parcels if not p.is_grassland]
-    total_area = sum(p.area for p in eligible)
-    if total_area <= 0:
-        return
-    for p in eligible:
-        p.n_organic_spread += n_organic_total * p.area / total_area
-
-
 class LCAEngine:
     """Process-based LCA engine (multi-farm, Monte-Carlo, registry).
 
@@ -284,12 +269,32 @@ class LCAEngine:
                 )
                 if slot == "manure_n2o":
                     n_organic = result.fluxes.get("n_organic_available", 0.0)
-            # Redistribution of organic nitrogen to the parcels.
-            # Pasture deposits are fully handled by the manure module
-            # (EF3PRP + indirect): no transfer to the soil module,
-            # to avoid double counting.
-            if n_organic > 0:
-                _distribute_manure_n(farm, n_organic)
+            # The organic nitrogen reaching the soil comes from the
+            # DECLARED organic fertilisation events of the parcels
+            # (explicit per-parcel spreading). The manure module only
+            # reports the available amount (housed excretions, by
+            # difference with the grazing events): a large mismatch
+            # between the two raises a diagnostic so the modeller can
+            # check the spreading plan (export/import of manure are
+            # legitimate reasons for a difference).
+            spread_declared = sum(
+                p.n_organic_spread * p.area for p in farm.parcels
+            )
+            if n_organic > 0 and spread_declared == 0:
+                diagnostics.warn(
+                    "manure_n2o",
+                    f"{n_organic:.0f} kg N of stored manure are available "
+                    "but no organic fertilisation is declared on any "
+                    "parcel (manure exported or undeclared spreading?)",
+                )
+            elif n_organic > 0 and abs(spread_declared - n_organic) > 0.25 * n_organic:
+                diagnostics.warn(
+                    "manure_n2o",
+                    f"declared organic spreading ({spread_declared:.0f} kg N) "
+                    f"differs from the available stored manure "
+                    f"({n_organic:.0f} kg N) by more than 25 % "
+                    "(export, import or measurement?)",
+                )
             # Phase 2: soil (N2O, carbon) + purchases + fieldwork.
             for slot in _POST_MANURE_SLOTS:
                 spec = self.registry.get(slot, model_selection[slot])

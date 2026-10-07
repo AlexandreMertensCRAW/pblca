@@ -81,7 +81,7 @@ farm_id = "ferme_test"
 avg_temp = 10.0
 
 [farm.manure_split]
-pasture = 1.0
+solid_storage = 1.0
 
 [farm.purchases]
 concentrate_kg_dm = 1000.0
@@ -93,7 +93,6 @@ days = 183
 bw_start = 50.0
 bw_end = 200.0
 diet_de = 0.70
-grazing = 1.0
 
 [[farm.parcels]]
 key = "prairie"

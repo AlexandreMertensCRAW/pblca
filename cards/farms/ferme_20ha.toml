@@ -22,10 +22,10 @@ mature_weight = 700.0
 manure_exported = 0.0
 
 [farm.manure_split]
-# 45 % of excretions at pasture (permanent and temporary grassland),
-# 55 % in buildings -> solid storage -> spreading.
-pasture = 0.45
-solid_storage = 0.55
+# Share of the HOUSED excretions per management system. The pasture
+# share is derived from the grazing events of the parcels (below) —
+# it is NOT declared here.
+solid_storage = 1.0
 
 [farm.purchases]
 # Purchased young animals: count and live weight; the engine derives
@@ -52,7 +52,6 @@ bw_start = 50.0
 bw_end = 200.0
 diet_de = 0.70
 share_concentrate = 0.10
-grazing = 0.5
 system = "mixed"
 # On-farm measurements (DEMO): GreenFeed AHCS g CH4/head/day,
 # ration sheets kg DM/head/day, INRA diet characterisation.
@@ -72,7 +71,6 @@ bw_start = 200.0
 bw_end = 350.0
 diet_de = 0.65
 share_concentrate = 0.20
-grazing = 0.8
 system = "mixed"
 ch4_measured_ahcs = 180.0
 ch4_measured_ahcs_rel_sd = 0.08
@@ -90,7 +88,6 @@ bw_start = 350.0
 bw_end = 600.0
 diet_de = 0.62
 share_concentrate = 0.35
-grazing = 0.7
 system = "mixed"
 ch4_measured_ahcs = 260.0
 ch4_measured_ahcs_rel_sd = 0.08
@@ -111,6 +108,28 @@ fuel_pids = ["fuel_mowing"]
 fmg_pid = "fmg_full_tillage"
 fi_pid = "fi_medium_input"
 
+  # Grazing events on this parcel (the pasture share of the manure is
+  # derived from these dates; the deposited N is routed to the parcel).
+  [[farm.parcels.grazing]]
+  group = "veaux_0_6mois"
+  entry = "2024-05-01"
+  exit = "2024-10-30"
+
+  [[farm.parcels.grazing]]
+  group = "jeunes_6_12mois"
+  entry = "2024-05-01"
+  exit = "2025-02-18"
+
+  [[farm.parcels.grazing]]
+  group = "engraissés_12_21mois"
+  entry = "2024-04-15"
+  exit = "2024-12-21"
+
+  [[farm.parcels.grazing]]
+  group = "engraissés_12_21mois"
+  entry = "2025-01-02"
+  exit = "2025-01-07"
+
 # 7 ha in rotation: each crop covers 7/6 ha on an annual average.
 # (crop, synthetic N kgN/ha, lime t/ha, deep tillage)
 
@@ -118,30 +137,74 @@ fi_pid = "fi_medium_input"
 key = "pomme_de_terre"
 crop = "pomme_de_terre"
 area = 1.1666666666666667
-n_synthetic = 110.0
 lime_t_ha = 0.5
 deep_tillage = true
+
+  # Solid manure from the farm's housing, spread before planting
+  # (part of the 788 kg N stored per year).
+  [[farm.parcels.organic_fertilisation]]
+  type = "solid_manure"
+  date = "2024-03-25"
+  n_kg = 300.0
+
+  # Mineral fertilisation: two dated applications (110 kg N/ha in total).
+  [[farm.parcels.synthetic_fertilisation]]
+  type = "ammonitrate"
+  date = "2024-04-10"
+  n_kg = 65.0
+
+  [[farm.parcels.synthetic_fertilisation]]
+  type = "ammonitrate"
+  date = "2024-06-10"
+  n_kg = 63.3
 
 [[farm.parcels]]
 key = "colza"
 crop = "colza"
 area = 1.1666666666666667
-n_synthetic = 140.0
 deep_tillage = true
+
+  [[farm.parcels.organic_fertilisation]]
+  type = "solid_manure"
+  date = "2024-02-15"
+  n_kg = 250.0
+
+  [[farm.parcels.synthetic_fertilisation]]
+  type = "ammonitrate"
+  date = "2024-02-20"
+  n_kg = 163.3
 
 [[farm.parcels]]
 key = "epeautre"
 crop = "epeautre"
 area = 1.1666666666666667
-n_synthetic = 90.0
 deep_tillage = true
+
+  [[farm.parcels.organic_fertilisation]]
+  type = "solid_manure"
+  date = "2024-10-20"
+  n_kg = 150.0
+
+  [[farm.parcels.synthetic_fertilisation]]
+  type = "ammonitrate"
+  date = "2024-03-15"
+  n_kg = 105.0
 
 [[farm.parcels]]
 key = "avoine"
 crop = "avoine"
 area = 1.1666666666666667
-n_synthetic = 70.0
 deep_tillage = true
+
+  [[farm.parcels.organic_fertilisation]]
+  type = "solid_manure"
+  date = "2024-10-25"
+  n_kg = 88.0
+
+  [[farm.parcels.synthetic_fertilisation]]
+  type = "ammonitrate"
+  date = "2024-03-20"
+  n_kg = 81.7
 
 [[farm.parcels]]
 key = "prairie_temporaire_an1"

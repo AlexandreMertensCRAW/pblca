@@ -98,9 +98,16 @@ path = "results.json"
 ```
 
 **Carte ferme** (`cards/farms/ferme_20ha.toml`) : la ferme complète —
-troupeau, parcelles, achats, gestion fumier ET les mesures
-on-farm (AHCS, rations, dMO/dMOd) déclarées sur le groupe animal
-auquel elles appartiennent. Une étude = une paire de cartes.
+troupeau, parcelles, achats, mesures on-farm (AHCS, rations, dMO/dMOd),
+**événements de pâturage datés** (`[[farm.parcels.grazing]]` : lot +
+dates d'entrée/sortie — la part pâturage du fumier en est dérivée et le
+N déposé est routé vers la parcelle pâturée) et **fertilisations datées
+par parcelle** (`[[farm.parcels.synthetic_fertilisation]]` /
+`[[farm.parcels.organic_fertilisation]]` : vecteurs d'événements
+`date` + `n_kg`, plusieurs apports par an). Le fumier solide épandu
+est déclaré explicitement ; le moteur vérifie sa cohérence avec le
+fumier disponible (diagnostic si écart > 25 %). Une étude = une paire
+de cartes.
 
 La card est validée au chargement (slot/variante inconnus → erreur
 explicite immédiate). Le fichier de résultats embarque la card

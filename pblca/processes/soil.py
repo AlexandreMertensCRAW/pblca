@@ -20,10 +20,12 @@ REF = "IPCC 2019 Refinement, Vol.4 Ch.11, Eq. 11.1, 11.9, 11.11 (Table 11.1/11.3
 def soil_n2o(ctx: ModelContext) -> ModelResult:
     """Direct and indirect N2O from the farm's agricultural soils.
 
-    Consistency note: the spread organic nitrogen originates from the
-    manure module (resolved beforehand) via
-    ``ctx.values["__n_organic_spread__"]`` if present, otherwise from
-    the static parcel values.
+    Consistency note: the spread organic nitrogen comes from the
+    declared organic fertilisation events of the parcels. The nitrogen
+    excreted at pasture is NOT an input here: it is accounted by the
+    manure module (EF3PRP + indirect) at deposition — counting it again
+    here would double-count (IPCC 2019 Refinement: PRP depositions
+    belong to the manure category).
 
     Returns:
         ModelResult with the total n2o_kg and a direct/indirect trace.
@@ -40,8 +42,8 @@ def soil_n2o(ctx: ModelContext) -> ModelResult:
         f_syn = p.n_synthetic * p.area
         f_org = p.n_organic_spread * p.area
         f_res = p.n_residue * p.area
-        f_prp = p.n_excreta_grazing * p.area
-        f_total = f_syn + f_org + f_res + f_prp
+        f_prp = p.n_excreta_grazing * p.area  # trace only (manure slot)
+        f_total = f_syn + f_org + f_res
         if f_total == 0 and p.area == 0:
             continue
         # Direct (Eq. 11.1)
@@ -50,7 +52,7 @@ def soil_n2o(ctx: ModelContext) -> ModelResult:
         # FracGASM for organic/residues/field deposits
         vol = (
             f_syn * v("frac_gasf")
-            + (f_org + f_res + f_prp) * v("frac_gasm")
+            + (f_org + f_res) * v("frac_gasm")
         ) * v("ef4_deposition")
         # Indirect leaching (Eq. 11.11)
         lea = f_total * v("frac_leach") * v("ef5_leaching")

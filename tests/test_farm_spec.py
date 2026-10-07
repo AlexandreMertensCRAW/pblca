@@ -17,7 +17,10 @@ from pblca.case_study import FERME_20HA, build_case_study_farm
 from pblca.farm_spec import (
     AnimalGroupSpec,
     FarmSpec,
+    GrazingEventSpec,
+    OrganicFertilisationSpec,
     ParcelSpec,
+    SyntheticFertilisationSpec,
     build_farm,
 )
 from pblca.params import build_default_parameter_set
@@ -31,12 +34,22 @@ def _minimal_spec(**overrides) -> FarmSpec:
             AnimalGroupSpec(
                 key="lot_a", n_head=40.0, days=365, bw_start=100,
                 bw_end=300, diet_de=0.65, share_concentrate=0.2,
-                grazing=0.5,
             ),
         ],
         parcels=[
-            ParcelSpec(key="maize", crop="mais", area=10.0,
-                       n_synthetic=120.0, deep_tillage=True),
+            ParcelSpec(
+                key="maize", crop="mais", area=10.0, deep_tillage=True,
+                grazing=[GrazingEventSpec(group="lot_a", entry="2024-05-01",
+                                          exit="2024-10-28")],
+                synthetic_fertilisation=[
+                    SyntheticFertilisationSpec(
+                        type="ammonitrate", date="2024-04-15", n_kg=1200.0),
+                ],
+                organic_fertilisation=[
+                    OrganicFertilisationSpec(
+                        type="solid_manure", date="2024-03-01", n_kg=800.0),
+                ],
+            ),
             ParcelSpec(key="meadow", crop="prairie_temporaire", area=5.0),
         ],
         purchases={
@@ -44,7 +57,7 @@ def _minimal_spec(**overrides) -> FarmSpec:
             "n_calves_purchased": 40.0,
             "calf_purchased_bw_kg": 100.0,
         },
-        manure_split={"pasture": 0.4, "solid_storage": 0.6},
+        manure_split={"solid_storage": 1.0},
         avg_temp=12.0,
     )
     from dataclasses import replace
@@ -139,6 +152,8 @@ class TestBuildFarm:
                     pregnant=True, work_hours=0.5,
                 ),
             ],
+            parcels=[ParcelSpec(key="maize", crop="mais", area=10.0,
+                                deep_tillage=True)],
         )
         farm = build_farm(spec)
         g = farm.animals[0]
@@ -163,7 +178,7 @@ class TestBuildFarm:
     def test_farm_context_fields(self):
         farm = build_farm(_minimal_spec())
         assert farm.farm_id == "test_farm"
-        assert farm.manure_split == {"pasture": 0.4, "solid_storage": 0.6}
+        assert farm.manure_split == {"solid_storage": 1.0}
         assert farm.avg_temp == 12.0
 
 
@@ -219,3 +234,166 @@ class TestCaseStudyConfigRule:
         farm = _build_farms(config, build_default_parameter_set())
         assert isinstance(farm, FarmContext)
         assert farm.farm_id == "test_farm"
+
+
+# ----------------------------------------------------------------------
+# Grazing events and dated fertilisations
+# ----------------------------------------------------------------------
+class TestGrazingEvents:
+    def _spec_with_grazing(self, **parcel_overrides):
+        return _minimal_spec(
+            parcels=[
+                ParcelSpec(
+                    key="maize", crop="mais", area=10.0, deep_tillage=True,
+                    **parcel_overrides,
+                ),
+                ParcelSpec(key="meadow", crop="prairie_temporaire", area=5.0),
+            ],
+        )
+
+    def test_grazing_fraction_derived_from_events(self):
+        # 180 days at pasture -> grazing = 180/365
+        spec = self._spec_with_grazing(
+            grazing=[GrazingEventSpec(group="lot_a", entry="2024-05-01",
+                                      exit="2024-10-28")],
+        )
+        farm = build_farm(spec)
+        assert farm.animals[0].grazing == pytest.approx(180 / 365.0)
+
+    def test_multiple_events_summed(self):
+        spec = self._spec_with_grazing(
+            grazing=[
+                GrazingEventSpec(group="lot_a", entry="2024-05-01",
+                                 exit="2024-06-01"),
+                GrazingEventSpec(group="lot_a", entry="2024-09-01",
+                                 exit="2024-10-01"),
+            ],
+        )
+        farm = build_farm(spec)
+        assert farm.animals[0].grazing == pytest.approx(61 / 365.0)
+
+    def test_no_event_means_housed(self):
+        farm = build_farm(_minimal_spec(
+            parcels=[ParcelSpec(key="maize", crop="mais", area=10.0,
+                                deep_tillage=True)],
+        ))
+        assert farm.animals[0].grazing == 0.0
+
+    def test_unknown_group_rejected(self):
+        with pytest.raises(ValueError, match="unknown animal group"):
+            build_farm(self._spec_with_grazing(
+                grazing=[GrazingEventSpec(group="ghost", entry="2024-05-01",
+                                          exit="2024-06-01")],
+            ))
+
+    def test_inverted_dates_rejected(self):
+        with pytest.raises(ValueError, match="after the entry"):
+            build_farm(self._spec_with_grazing(
+                grazing=[GrazingEventSpec(group="lot_a", entry="2024-06-01",
+                                          exit="2024-05-01")],
+            ))
+
+    def test_over_one_year_rejected(self):
+        with pytest.raises(ValueError, match="exceed one year"):
+            build_farm(self._spec_with_grazing(
+                grazing=[GrazingEventSpec(group="lot_a", entry="2023-01-01",
+                                          exit="2024-06-01")],
+            ))
+
+    def test_deposited_n_routed_to_parcel(self):
+        """The manure module routes the deposited N to the grazed
+        parcel (n_excreta_grazing, kg N/ha/yr)."""
+        from pblca.engine import LCAEngine
+
+        spec = self._spec_with_grazing(
+            grazing=[GrazingEventSpec(group="lot_a", entry="2024-05-01",
+                                      exit="2024-10-28")],
+        )
+        engine = LCAEngine(
+            datastore_path="/tmp/test_grazing_route.json")
+        farm = build_farm(spec, engine.params)
+        r = engine.run(farm, record=False)
+        # The engine deepcopies the farm; the deposition appears in the
+        # manure trace, and the prp nitrogen matches the grazing share.
+        fluxes = r.model_outputs["manure_n2o"]["fluxes"]
+        assert fluxes["n_prp_total"] > 0
+        # The pasture share of the direct N2O equals the grazing
+        # fraction of the group (not a declared farm-level split).
+        share = fluxes["n_prp_total"] / (
+            fluxes["n_prp_total"]
+            + fluxes.get("n_organic_available", 0.0)
+        )
+        assert 0.0 < share < 1.0
+
+
+class TestDatedFertilisations:
+    def test_synthetic_events_summed(self):
+        spec = _minimal_spec(
+            parcels=[
+                ParcelSpec(
+                    key="maize", crop="mais", area=10.0, deep_tillage=True,
+                    synthetic_fertilisation=[
+                        SyntheticFertilisationSpec(
+                            type="ammonitrate", date="2024-04-15",
+                            n_kg=600.0),
+                        SyntheticFertilisationSpec(
+                            type="ammonitrate", date="2024-06-15",
+                            n_kg=600.0),
+                    ],
+                ),
+            ],
+        )
+        farm = build_farm(spec)
+        # 1200 kg N on 10 ha -> 120 kg N/ha/yr
+        assert farm.parcels[0].n_synthetic == pytest.approx(120.0)
+
+    def test_organic_events_summed(self):
+        spec = _minimal_spec(
+            parcels=[
+                ParcelSpec(
+                    key="maize", crop="mais", area=10.0, deep_tillage=True,
+                    organic_fertilisation=[
+                        OrganicFertilisationSpec(
+                            type="solid_manure", date="2024-03-01",
+                            n_kg=800.0),
+                        OrganicFertilisationSpec(
+                            type="compost", date="2024-07-01",
+                            n_kg=400.0),
+                    ],
+                ),
+            ],
+        )
+        farm = build_farm(spec)
+        assert farm.parcels[0].n_organic_spread == pytest.approx(120.0)
+
+    def test_invalid_date_rejected(self):
+        with pytest.raises(ValueError, match="invalid date"):
+            build_farm(_minimal_spec(
+                parcels=[
+                    ParcelSpec(
+                        key="maize", crop="mais", area=10.0,
+                        deep_tillage=True,
+                        synthetic_fertilisation=[
+                            SyntheticFertilisationSpec(
+                                type="ammonitrate", date="15/04/2024",
+                                n_kg=100.0),
+                        ],
+                    ),
+                ],
+            ))
+
+    def test_negative_n_rejected(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            build_farm(_minimal_spec(
+                parcels=[
+                    ParcelSpec(
+                        key="maize", crop="mais", area=10.0,
+                        deep_tillage=True,
+                        synthetic_fertilisation=[
+                            SyntheticFertilisationSpec(
+                                type="ammonitrate", date="2024-04-15",
+                                n_kg=-5.0),
+                        ],
+                    ),
+                ],
+            ))

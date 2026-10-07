@@ -81,9 +81,24 @@ def manure_ch4(ctx: ModelContext) -> ModelResult:
     total = 0.0
     res.trace["systems"] = {}
     fluxes = _per_group_fluxes(ctx)
+    groups = {a.key: a for a in ctx.farm.animals}
     for key, fl in fluxes.items():
+        g = groups[key]
         vs_year = fl["vs_kg_day"] * 365.0  # kg VS/head/yr
+        # Per-group split derived from the grazing events (the farm
+        # manure_split now applies to the HOUSED excretions only).
+        housed_share = 1.0 - g.grazing
+        systems = {"pasture": g.grazing}
         for system, share in ctx.farm.manure_split.items():
+            if system == "pasture":
+                ctx.logger.warn(
+                    "manure_ch4",
+                    "manure_split 'pasture' is derived from the grazing "
+                    "events; the declared share is ignored",
+                )
+                continue
+            systems[system] = housed_share * share
+        for system, share in systems.items():
             if share == 0:
                 continue
             if system == "pasture":
@@ -93,8 +108,7 @@ def manure_ch4(ctx: ModelContext) -> ModelResult:
             else:
                 ctx.logger.error("manure_ch4", f"Unknown manure system: {system}")
                 continue
-            # retrieve the headcount of the group
-            n_head = next(a.n_head for a in ctx.farm.animals if a.key == key)
+            n_head = g.n_head
             ch4 = vs_year * v("bo_cattle_manure") * mcf * share * n_head
             res.trace["systems"].setdefault(system, 0.0)
             res.trace["systems"][system] += ch4
@@ -129,14 +143,47 @@ def manure_n2o(ctx: ModelContext) -> ModelResult:
     fluxes = _per_group_fluxes(ctx)
     res.trace["direct"] = {}
     res.trace["indirect"] = {}
+    groups = {a.key: a for a in ctx.farm.animals}
+    parcels = {p.key: p for p in ctx.farm.parcels}
+    grazing_days_map = ctx.farm.parcel_grazing_days or {}
     for key, fl in fluxes.items():
-        n_head = next(a.n_head for a in ctx.farm.animals if a.key == key)
+        g = groups[key]
+        n_head = g.n_head
         nex_year = fl["n_excreta_kg_day"] * 365.0 * n_head  # kg N/yr
+        # Per-group split derived from the grazing events (the farm
+        # manure_split applies to the HOUSED excretions only).
+        housed_share = 1.0 - g.grazing
+        systems = {"pasture": g.grazing}
         for system, share in ctx.farm.manure_split.items():
+            if system == "pasture":
+                ctx.logger.warn(
+                    "manure_n2o",
+                    "manure_split 'pasture' is derived from the grazing "
+                    "events; the declared share is ignored",
+                )
+                continue
+            systems[system] = housed_share * share
+        for system, share in systems.items():
             if share == 0:
                 continue
             nex_s = nex_year * share
             if system == "pasture":
+                # Route the deposition to the parcels the group
+                # actually grazed (kg N/ha/yr on each parcel).
+                group_days_total = sum(
+                    days_map.get(key, 0.0)
+                    for days_map in grazing_days_map.values()
+                )
+                if group_days_total > 0:
+                    for p_key, days_map in grazing_days_map.items():
+                        days = days_map.get(key, 0.0)
+                        if days <= 0 or p_key not in parcels:
+                            continue
+                        parcel = parcels[p_key]
+                        parcel.n_excreta_grazing += (
+                            fl["n_excreta_kg_day"] * days * n_head
+                            / parcel.area
+                        )
                 ef3 = v("ef3_prp_cattle")
                 # Pasture deposition: FracGASM volatilisation then EF4;
                 # the remainder reaches the soil as an organic input

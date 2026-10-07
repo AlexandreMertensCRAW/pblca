@@ -38,10 +38,12 @@ from .registry import AnimalGroup, FarmContext, LandParcel
 class AnimalGroupSpec:
     """One animal group (age class or herd), declared with values only.
 
-    Fattening fields (bw_start/bw_end/days, share_concentrate, grazing)
-    and dairy/livestock fields (milk_prot, milk_fat, pregnant,
+    Fattening fields (bw_start/bw_end/days, share_concentrate) and
+    dairy/livestock fields (milk_prot, milk_fat, pregnant,
     work_hours) are all first-class citizens: the spec describes any
-    production system. On-farm measurements (dmi_measured, ge_measured,
+    production system. The time at pasture is NOT declared here: it
+    is derived from the grazing events of the parcels
+    (:class:`GrazingEventSpec`) — one source of truth. On-farm measurements (dmi_measured, ge_measured,
     ration_rel_sd, ch4_measured_ahcs, diet_om/diet_omd) are declared
     here, on the group they belong to. Fields left to None keep the
     registry defaults. ``extra`` is an escape hatch for any other
@@ -59,7 +61,6 @@ class AnimalGroupSpec:
     bw_end: float
     diet_de: float
     share_concentrate: float = 0.0
-    grazing: float = 1.0
     system: Optional[str] = None
     diet_ge_density: Optional[float] = None
     milk_prot: float = 0.0
@@ -75,6 +76,62 @@ class AnimalGroupSpec:
     diet_om: Optional[float] = None
     diet_omd: Optional[float] = None
     extra: Optional[Dict[str, Any]] = None
+
+
+
+@dataclass
+class GrazingEventSpec:
+    """One grazing event: an animal group on a parcel, between two
+    dates. The duration (days) is derived from the dates; several
+    events of the same (group, parcel) are summed.
+
+    Attributes:
+        group: animal group key (must exist in the farm animals).
+        entry: entry date (YYYY-MM-DD).
+        exit: exit date (YYYY-MM-DD), after the entry.
+    """
+
+    group: str
+    entry: str
+    exit: str
+
+
+@dataclass
+class OrganicFertilisationSpec:
+    """One dated organic fertilisation event on a parcel (solid
+    manure, compost, ...): a vector, several events per year.
+
+    Attributes:
+        type: fertiliser type ("solid_manure", "compost", ...); kept
+            for traceability (future per-form NH3 differentiation).
+        date: application date (YYYY-MM-DD); stored for the future
+            time-dynamic soil model, not consumed by the annual one.
+        n_kg: organic nitrogen of THIS application on the parcel
+            (kg N); the builder sums the events into kg N/ha/yr.
+    """
+
+    type: str
+    date: str
+    n_kg: float
+
+
+@dataclass
+class SyntheticFertilisationSpec:
+    """One dated synthetic fertilisation event on a parcel: a
+    vector, several applications per year.
+
+    Attributes:
+        type: fertiliser form ("ammonitrate", "urea", ...); kept for
+            traceability (future per-form emission factors).
+        date: application date (YYYY-MM-DD); stored for the future
+            time-dynamic soil model, not consumed by the annual one.
+        n_kg: synthetic nitrogen of THIS application on the parcel
+            (kg N); the builder sums the events into kg N/ha/yr.
+    """
+
+    type: str = "mineral_n"
+    date: str = ""
+    n_kg: float = 0.0
 
 
 @dataclass
@@ -102,7 +159,6 @@ class ParcelSpec:
     key: str
     crop: str
     area: float
-    n_synthetic: float = 0.0
     lime_t_ha: float = 0.0
     deep_tillage: bool = False
     is_grassland: Optional[bool] = None
@@ -111,6 +167,9 @@ class ParcelSpec:
     flu_pid: Optional[str] = None
     fmg_pid: Optional[str] = None
     fi_pid: Optional[str] = None
+    grazing: Optional[List[GrazingEventSpec]] = None
+    organic_fertilisation: Optional[List[OrganicFertilisationSpec]] = None
+    synthetic_fertilisation: Optional[List[SyntheticFertilisationSpec]] = None
 
 
 @dataclass
@@ -184,7 +243,7 @@ def _parcel(spec: ParcelSpec, values: Dict[str, float]) -> LandParcel:
         key=spec.key,
         crop=spec.crop,
         area=spec.area,
-        n_synthetic=spec.n_synthetic,
+        n_synthetic=0.0,
         lime=spec.lime_t_ha * 1000.0,
         n_residue=spec.n_residue,
         fuel_use=fuel_use,
@@ -211,6 +270,51 @@ def build_farm(
     """
     values = (params or build_default_parameter_set()).central_values()
 
+    # ---- Grazing events: validation, per-group days at pasture and
+    # ---- per-parcel routing of the deposited nitrogen.
+    from datetime import date as _date
+
+    def _valid_date(text, context):
+        try:
+            return _date.fromisoformat(text)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{context}: invalid date '{text}' (expected YYYY-MM-DD)"
+            ) from None
+
+    def _event_days(ev, parcel_key):
+        d0 = _valid_date(ev.entry, f"grazing of '{ev.group}' on '{parcel_key}'")
+        d1 = _valid_date(ev.exit, f"grazing of '{ev.group}' on '{parcel_key}'")
+        if d1 <= d0:
+            raise ValueError(
+                f"grazing of '{ev.group}' on '{parcel_key}': exit "
+                f"({ev.exit}) must be after the entry ({ev.entry})"
+            )
+        return (d1 - d0).days
+
+    group_keys = {a.key for a in spec.animals}
+    grazing_days = {k: 0.0 for k in group_keys}
+    parcel_grazing_days: Dict[str, Dict[str, float]] = {}
+    for p in spec.parcels:
+        per_group: Dict[str, float] = {}
+        for ev in p.grazing or []:
+            if ev.group not in group_keys:
+                raise ValueError(
+                    f"grazing on parcel '{p.key}': unknown animal group "
+                    f"'{ev.group}' (groups: {sorted(group_keys)})"
+                )
+            days = _event_days(ev, p.key)
+            grazing_days[ev.group] += days
+            per_group[ev.group] = per_group.get(ev.group, 0.0) + days
+        if per_group:
+            parcel_grazing_days[p.key] = per_group
+    for key, days in grazing_days.items():
+        if days > 365:
+            raise ValueError(
+                f"grazing events of group '{key}': {days} days at "
+                "pasture exceed one year"
+            )
+
     animals = []
     for a in spec.animals:
         group_kwargs: Dict[str, Any] = {
@@ -226,7 +330,7 @@ def build_farm(
             "milk_fat": a.milk_fat,
             "work_hours": a.work_hours,
             "pregnant": a.pregnant,
-            "grazing": a.grazing,
+            "grazing": min(grazing_days[a.key] / 365.0, 1.0),
             "dmi_measured": a.dmi_measured,
             "ge_measured": a.ge_measured,
             "ration_rel_sd": a.ration_rel_sd,
@@ -243,6 +347,32 @@ def build_farm(
         animals.append(AnimalGroup(**group_kwargs))
 
     parcels = [_parcel(p, values) for p in spec.parcels]
+    # ---- Dated fertilisation events -> per-parcel annual rates -------
+    # Dates are validated for traceability (future dynamic soil model);
+    # the annual model sums the events per parcel.
+    for p, ctx_p in zip(spec.parcels, parcels):
+        for f in p.synthetic_fertilisation or []:
+            if f.n_kg < 0:
+                raise ValueError(
+                    f"synthetic fertilisation of parcel '{p.key}': "
+                    "'n_kg' must be positive"
+                )
+            if f.date:
+                _valid_date(
+                    f.date, f"synthetic fertilisation of parcel '{p.key}'"
+                )
+            ctx_p.n_synthetic += f.n_kg / ctx_p.area
+        for f in p.organic_fertilisation or []:
+            if f.n_kg < 0:
+                raise ValueError(
+                    f"organic fertilisation of parcel '{p.key}': "
+                    "'n_kg' must be positive"
+                )
+            if f.date:
+                _valid_date(
+                    f.date, f"organic fertilisation of parcel '{p.key}'"
+                )
+            ctx_p.n_organic_spread += f.n_kg / ctx_p.area
 
     purchases = dict(spec.purchases)
     n_calves = purchases.pop("n_calves_purchased", 0.0)
@@ -264,4 +394,5 @@ def build_farm(
         manure_exported=spec.manure_exported,
         avg_temp=spec.avg_temp,
         mature_weight=spec.mature_weight,
+        parcel_grazing_days=parcel_grazing_days or None,
     )
