@@ -366,7 +366,9 @@ son ancre. Liens utiles :
   (slot, tier, référence, champs requis)
 
 **Règle du dépôt** : `pytest` et `pdoc pblca -o docs_html` doivent passer
-avant chaque commit (`AGENTS.md`). Les docstrings étant en anglais
+avant chaque commit (`AGENTS.md`). Après toute modification de ce guide,
+régénérer le PDF : `python scripts/make_guide_pdf.py` (GUIDE.md reste la
+source de vérité). Les docstrings étant en anglais
 (convention du dépôt), la doc générée est en anglais ; ce guide, lui, est
 en français.
 
