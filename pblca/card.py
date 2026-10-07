@@ -88,7 +88,7 @@ from typing import Any, Dict, List, Optional, Union
 from .farm_spec import AnimalGroupSpec, FarmSpec, ParcelSpec
 from .params import ParameterSet
 from .registry import ModelRegistry, build_default_registry
-from .scenarios import CaseStudyConfig, NumericalOptions
+from .scenarios import CaseStudyConfig, NumericalOptions, PairedGridConfig
 
 # Built-in farms shipped with the package (pblca.case_study).
 BUILTIN_FARMS: Dict[str, FarmSpec] = {}
@@ -132,6 +132,7 @@ class Card:
     variant_grid: Dict[str, List[str]] = field(default_factory=dict)
     named_combinations: Dict[str, Dict[str, str]] = field(default_factory=dict)
     mc: Optional[NumericalOptions] = None
+    paired_grid: Optional[PairedGridConfig] = None
     datastore_path: str = "results.json"
     source_sha256: str = ""
     source_text: str = ""
@@ -152,6 +153,15 @@ class Card:
                 if self.mc is None
                 else {"n_iterations": self.mc.n_iterations, "seed": self.mc.seed}
             ),
+            "paired_grid": (
+                None
+                if self.paired_grid is None
+                else {
+                    "slots": {k: list(v) for k, v in self.paired_grid.slots.items()},
+                    "main_selection": dict(self.paired_grid.main_selection or {}),
+                    "full_factorial": self.paired_grid.full_factorial,
+                }
+            ),
         }
 
     def to_case_study(self) -> CaseStudyConfig:
@@ -163,6 +173,7 @@ class Card:
             variant_grid=dict(self.variant_grid) or None,
             named_combinations=dict(self.named_combinations) or None,
             mc=self.mc,
+            paired_grid=self.paired_grid,
         )
 
 
@@ -357,6 +368,57 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
     if unknown_ds:
         raise CardError(f"[datastore]: unknown key(s) {unknown_ds}")
 
+    paired_data = doc.get("paired_grid")
+    paired_grid: Optional[PairedGridConfig] = None
+    if paired_data is not None:
+        if not isinstance(paired_data, dict):
+            raise CardError("'paired_grid' must be a table")
+        unknown_pg = sorted(
+            set(paired_data) - {"slots", "main_selection", "full_factorial"}
+        )
+        if unknown_pg:
+            raise CardError(f"[paired_grid]: unknown key(s) {unknown_pg}")
+        pg_slots = paired_data.get("slots")
+        if not isinstance(pg_slots, dict) or not pg_slots:
+            raise CardError(
+                "[paired_grid]: 'slots' is required "
+                "({slot: [variants]}, at least one slot)"
+            )
+        for slot, variants in pg_slots.items():
+            if not isinstance(variants, list) or not variants or not all(
+                isinstance(v, str) for v in variants
+            ):
+                raise CardError(
+                    f"[paired_grid.slots]: '{slot}' must be a non-empty "
+                    "list of strings"
+                )
+            _validate_selection(
+                registry, {slot: v for v in variants}, f"[paired_grid.slots] '{slot}'"
+            )
+        pg_main = paired_data.get("main_selection") or {}
+        if not isinstance(pg_main, dict) or not all(
+            isinstance(v, str) for v in pg_main.values()
+        ):
+            raise CardError(
+                "[paired_grid]: 'main_selection' must be a table "
+                "of {slot: variant}"
+            )
+        _validate_selection(registry, pg_main, "[paired_grid] main_selection")
+        unknown_main = sorted(set(pg_main) - set(pg_slots))
+        if unknown_main:
+            raise CardError(
+                f"[paired_grid]: main_selection names non-swept slot(s) "
+                f"{unknown_main}"
+            )
+        ff = paired_data.get("full_factorial", False)
+        if not isinstance(ff, bool):
+            raise CardError("[paired_grid]: 'full_factorial' must be a boolean")
+        paired_grid = PairedGridConfig(
+            slots={k: list(v) for k, v in pg_slots.items()},
+            main_selection=dict(pg_main) or None,
+            full_factorial=ff,
+        )
+
     name = study.get("name") or "etude"
     if not isinstance(name, str) or not name:
         raise CardError("[study]: 'name' must be a non-empty string")
@@ -369,6 +431,7 @@ def load_card(path: str, registry: Optional[ModelRegistry] = None) -> Card:
         variant_grid=dict(variant_grid),
         named_combinations=named_combinations,
         mc=mc,
+        paired_grid=paired_grid,
         datastore_path=datastore.get("path", "results.json"),
         source_sha256=hashlib.sha256(source_text_bytes).hexdigest(),
         source_text=source_text_bytes.decode("utf-8"),

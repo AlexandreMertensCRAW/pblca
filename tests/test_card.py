@@ -154,3 +154,80 @@ def test_cli_run_invalid_card(tmp_path):
     )
     assert result.returncode == 2
     assert "unknown built-in farm" in result.stderr
+
+
+# ----------------------------------------------------------------------
+# [paired_grid] section
+# ----------------------------------------------------------------------
+PAIRED_CARD = """
+[study]
+name = "pg"
+farm = "ferme_20ha"
+
+[paired_grid]
+full_factorial = false
+
+[paired_grid.slots]
+enteric_ch4 = ["tier2_2006_modelled_ingestion", "tier3_mills_modelled_ingestion"]
+manure_ch4 = ["ipcc_tier2"]
+
+[paired_grid.main_selection]
+enteric_ch4 = "tier2_2006_modelled_ingestion"
+"""
+
+
+def test_card_paired_grid():
+    card = load_card(_write_card_tmp(PAIRED_CARD))
+    assert card.paired_grid is not None
+    assert card.paired_grid.full_factorial is False
+    assert card.paired_grid.slots["manure_ch4"] == ["ipcc_tier2"]
+    assert card.paired_grid.main_selection == {
+        "enteric_ch4": "tier2_2006_modelled_ingestion"
+    }
+    cfg = card.to_case_study()
+    assert cfg.paired_grid.slots == card.paired_grid.slots
+
+
+def test_card_paired_grid_invalid_variant():
+    text = PAIRED_CARD.replace(
+        'manure_ch4 = ["ipcc_tier2"]', 'manure_ch4 = ["not_a_variant"]'
+    )
+    with pytest.raises(CardError, match="Unknown variant"):
+        load_card(_write_card_tmp(text))
+
+
+def test_card_paired_grid_main_not_swept():
+    text = PAIRED_CARD.replace(
+        '[paired_grid.main_selection]\nenteric_ch4 = "tier2_2006_modelled_ingestion"',
+        '[paired_grid.main_selection]\nsoil_n2o = "ipcc_2019"',
+    )
+    with pytest.raises(CardError, match="non-swept slot"):
+        load_card(_write_card_tmp(text))
+
+
+def test_card_paired_grid_unknown_key():
+    text = PAIRED_CARD.replace(
+        "full_factorial = false", "full_factorial = false\nwhatever = 1"
+    )
+    with pytest.raises(CardError, match="unknown key"):
+        load_card(_write_card_tmp(text))
+
+
+def test_run_card_with_paired_grid(tmp_path):
+    text = (
+        PAIRED_CARD
+        + f"""
+[monte_carlo]
+n_iterations = 3
+seed = 1
+
+[datastore]
+path = "{tmp_path}/out_pg.json"
+"""
+    )
+    card = load_card(_write_card_tmp(text))
+    summary = run_card(card)
+    assert "paired_grid" in summary
+    assert summary["paired_grid"]["mode"] == "one_factor"
+    doc = json.loads((tmp_path / "out_pg.json").read_text(encoding="utf-8"))
+    assert doc["card"]["paired_grid"]["slots"]["manure_ch4"] == ["ipcc_tier2"]

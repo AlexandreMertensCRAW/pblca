@@ -89,6 +89,16 @@ enteric_ch4 = "tier2_2006_modelled_ingestion"
 [variant_grid]             # sweeps mono-slot (run central + Monte-Carlo)
 enteric_ch4 = ["tier2_2006_modelled_ingestion", "tier3_mills_modelled_ingestion"]
 
+[paired_grid]               # grille appariée multi-slots (optionnelle)
+full_factorial = false      # ou true : produit cartésien des variantes
+
+[paired_grid.slots]
+enteric_ch4 = ["tier2_2006_modelled_ingestion", "tier3_mills_modelled_ingestion"]
+manure_ch4 = ["ipcc_tier2", "tier3_eugene2019"]
+
+[paired_grid.main_selection]   # référence des différences appariées
+enteric_ch4 = "tier2_2006_modelled_ingestion"
+
 [monte_carlo]
 n_iterations = 500
 seed = 2024
@@ -96,6 +106,12 @@ seed = 2024
 [datastore]
 path = "results.json"
 ```
+
+`[paired_grid]` généralise la grille appariée entérique
+(`run_paired_grid`) : un tirage par itération → toutes les colonnes
+slot×variante évaluées avec ce même tirage ; les différences appariées
+entre deux colonnes ne différant que par un slot isolent l'effet pur de
+ce slot (décomposition de variance étendue au choix fumier).
 
 La card est validée au chargement (slot/variante inconnus → erreur
 explicite immédiate). Le fichier de résultats embarque la card

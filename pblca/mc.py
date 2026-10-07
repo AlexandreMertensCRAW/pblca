@@ -589,100 +589,166 @@ def run_ration_comparison(
     return out
 
 
-def run_paired_variant_grid(
+def run_paired_grid(
     engine: "LCAEngine",
     farms: Union[FarmContext, Sequence[FarmContext]],
-    variants: Sequence[str],
+    slots: Dict[str, Sequence[str]],
     n_iterations: int = 1000,
     model_selection: Optional[Dict[str, str]] = None,
     seed: Optional[int] = None,
     record: bool = True,
-    sim_id: str = "paired_enteric_grid",
-    main_variant: Optional[str] = None,
+    sim_id: str = "paired_grid",
+    main_selection: Optional[Dict[str, str]] = None,
+    full_factorial: bool = False,
 ) -> Dict[str, Any]:
-    """Paired Monte-Carlo evaluation of enteric-CH4 model variants.
+    """Paired Monte-Carlo evaluation of model variants over several slots.
 
     At each Monte-Carlo iteration, ONE parameter draw is performed and
-    every enteric variant of ``variants`` is evaluated with this same
-    draw. Because all columns of one iteration share the same
-    parameter values, the emissions table is directly comparable
-    column-wise: a row difference reflects the model structure, not
-    the sampling noise.
+    EVERY column of the grid is evaluated with this same draw. Because
+    all columns of one iteration share the parameter values, the
+    emissions table is directly comparable column-wise: a row
+    difference reflects the model structure, not the sampling noise.
 
     The measured rations are perturbed per iteration exactly as in
     ``run_monte_carlo`` (one lognormal factor per group, applied to
     both DMI and GE, plus one factor per measured-CH4 method): all
-    variants see the SAME perturbed measurements, so the pairing
+    columns see the SAME perturbed measurements, so the pairing
     holds for the ``_ingestion_measured`` and ``measured_*``
     variants too.
 
-    Non-enteric slots keep the variants given by ``model_selection``
-    (or the registry defaults); only the ``enteric_ch4`` slot sweeps
-    ``variants``. Variants not runnable on the farms (missing
-    required group fields) are excluded upfront, with the reason.
+    Two modes:
 
-    One variant is the ``main_variant`` (default: the first runnable
-    one) and the others are alternatives: each alternative is also
-    reported as a PAIRED DIFFERENCE against the main variant, per
-    indicator. Because the two evaluations of an iteration share the
-    same draw, this difference isolates the pure effect of the model
-    choice on the farm result (parameters, gases, impacts).
+    * one-factor-at-a-time (default): one column per swept
+      (slot, variant), the other swept slots staying at their main
+      variant, plus the reference column (every swept slot at its
+      main variant);
+    * ``full_factorial=True``: one column per combination of the
+      swept slots (Cartesian product), e.g. 11 enteric x 2 manure =
+      22 paired columns.
+
+    Variants not runnable on the farms (missing required group
+    fields) are excluded upfront, with the reason.
+
+    The reference of the paired differences is ``main_selection``
+    (one variant per swept slot; default: the first runnable variant
+    of each slot). For each swept slot, each non-main variant is
+    reported as a PAIRED DIFFERENCE against the reference — in
+    full-factorial mode both columns exist in the grid, so the
+    difference isolates the pure effect of that slot's model choice
+    (parameters, gases, impacts).
 
     Args:
         engine: the LCA engine (runs, records).
         farms: one farm or a list of farms.
-        variants: enteric-CH4 variants to evaluate (paired columns).
+        slots: variants to sweep, per slot, e.g.
+            ``{"enteric_ch4": [...], "manure_ch4": [...]}``.
         n_iterations: number of iterations (>0).
-        model_selection: variants for the other slots.
+        model_selection: variants for the non-swept slots.
         seed: random seed (reproducibility).
         record: if True, records a summary entry in the datastore.
         sim_id: identifier of the recorded entry (use distinct ids
             when running several paired grids).
-        main_variant: the reference variant of the paired differences
-            (default: the first runnable variant). It must belong to
-            the runnable subset of ``variants``.
+        main_selection: reference variant per swept slot (default:
+            the first runnable variant of each slot).
+        full_factorial: sweep the Cartesian product of the variants
+            instead of one factor at a time.
 
     Returns:
         a dictionary with, under ``emissions_table``, one row per
-        iteration ``{"iteration": i, "<variant>__<indicator>": value,
-        ...}`` (flat columns: the whole-farm indicators of each
-        variant; indicators = the impacts gwp100/gwp20/gwpstar and
-        the gas totals ch4_kg/n2o_kg/co2_kg) and, under
-        ``parameter_draws_table``, one row per iteration
-        ``{"iteration": i, "<pid>": value, ...}`` (the drawn parameter
-        values — full traceability). Per indicator and variant, the
-        descriptive statistics are returned under
-        ``farm_indicators_stats`` and the paired difference against
-        the main variant under ``paired_differences_stats`` (absent
-        for the main variant itself).
+        iteration ``{"iteration": i, "<label>__<indicator>": value,
+        ...}`` (flat columns: the whole-farm indicators of every
+        column of the grid; indicators = the impacts
+        gwp100/gwp20/gwpstar and the gas totals ch4_kg/n2o_kg/co2_kg)
+        and, under ``parameter_draws_table``, one row per iteration
+        ``{"iteration": i, "<pid>": value, ...}``. The column label is
+        the bare variant name when a single slot is swept (contract of
+        the enteric-grid analyses), else ``"slot=variant"`` joined by
+        commas. Per indicator and column, the descriptive statistics
+        are returned under ``farm_indicators_stats`` and the paired
+        differences against the reference under
+        ``paired_differences_stats``. When a single slot is swept,
+        the legacy keys ``slot``, ``variants`` and ``main_variant``
+        are also provided (``run_paired_variant_grid`` contract).
     """
+    import itertools
+
     from .scenarios import _variant_is_runnable
 
     if isinstance(farms, FarmContext):
         farms = [farms]
     farms = list(farms)
-    if not variants:
-        raise ValueError("run_paired_variant_grid requires at least one variant")
+    slot_order = list(slots)
+    if not slot_order:
+        raise ValueError("run_paired_grid requires at least one slot")
+    for slot, variants in slots.items():
+        if not variants:
+            raise ValueError(
+                f"run_paired_grid: slot '{slot}' has no variant to sweep"
+            )
+    single_slot = len(slot_order) == 1
+
     # Exclude the variants that cannot run on these farms (missing
     # required group fields), keeping a deterministic order.
-    runnable: List[str] = []
+    runnable: Dict[str, List[str]] = {}
     exclusions: Dict[str, str] = {}
-    for variant in variants:
-        reason = _variant_is_runnable(engine.registry, "enteric_ch4", variant, farms)
-        if reason is None:
-            runnable.append(variant)
-        else:
-            exclusions[variant] = reason
-    if not runnable:
+    for slot in slot_order:
+        runnable[slot] = []
+        for variant in slots[slot]:
+            reason = _variant_is_runnable(engine.registry, slot, variant, farms)
+            if reason is None:
+                runnable[slot].append(variant)
+            else:
+                label = variant if single_slot else f"{slot}={variant}"
+                exclusions[label] = reason
+    empty = [s for s in slot_order if not runnable[s]]
+    if empty:
         raise ValueError(
-            "no runnable enteric variant among: " + ", ".join(variants)
+            "no runnable variant for slot(s): " + ", ".join(empty)
         )
-    main_variant = main_variant if main_variant is not None else runnable[0]
-    if main_variant not in runnable:
-        raise ValueError(
-            f"main_variant '{main_variant}' is not among the runnable "
-            f"variants: {', '.join(runnable)}"
-        )
+
+    # Reference of the paired differences: one variant per swept slot.
+    main_sel = dict(main_selection or {})
+    for slot in slot_order:
+        main_sel.setdefault(slot, runnable[slot][0])
+    for slot, variant in main_sel.items():
+        if slot not in runnable:
+            raise ValueError(
+                f"main_selection: unknown swept slot '{slot}' "
+                f"(swept: {slot_order})"
+            )
+        if variant not in runnable[slot]:
+            raise ValueError(
+                f"main_selection: variant '{variant}' is not among the "
+                f"runnable variants of '{slot}': {', '.join(runnable[slot])}"
+            )
+    reference = {s: main_sel[s] for s in slot_order}
+
+    def _label(sel: Dict[str, str]) -> str:
+        if single_slot:
+            return sel[slot_order[0]]
+        return ",".join(f"{s}={sel[s]}" for s in slot_order)
+
+    # Columns of the grid: (label, model_selection).
+    columns: List[tuple] = []
+    if full_factorial:
+        for combo in itertools.product(*(runnable[s] for s in slot_order)):
+            sel = dict(zip(slot_order, combo))
+            columns.append((_label(sel), sel))
+    else:
+        for slot in slot_order:
+            for variant in runnable[slot]:
+                sel = {**reference, slot: variant}
+                columns.append((_label(sel), sel))
+        if not single_slot:
+            ref_tuple = tuple(reference[s] for s in slot_order)
+            existing = {
+                tuple(sel[s] for s in slot_order) for _, sel in columns
+            }
+            if ref_tuple not in existing:
+                columns.append((_label(reference), dict(reference)))
+        # Single slot: the reference IS the main-variant column.
+    labels = [label for label, _ in columns]
+
     rng = np.random.default_rng(seed)
     ration_state = _ration_snapshot(farms)
     has_measures = any(
@@ -692,28 +758,20 @@ def run_paired_variant_grid(
     )
     base_selection = dict(model_selection or {})
     central_values = engine.params.central_values()
-    # Central run (reference values, main variant): only used for
-    # the summary of the non-enteric slots.
+    # Central run (reference values, main selection): used for the
+    # summary of the non-swept slots and the source x gas columns.
     central = engine.run(
         farms,
-        model_selection={**base_selection, "enteric_ch4": main_variant},
+        model_selection={**base_selection, **reference},
         values=central_values,
         sim_id=sim_id,
         record=False,
     )
     summary = engine.registry.selection_summary(central.model_selection)
-    # Flat farm-level indicator columns: the impacts of the whole
-    # farm (gwp100, gwp20, gwpstar) and the gas totals of the ledger,
-    # for EVERY variant -> "<variant>__<indicator>".
+
     indicator_names = sorted(central.impacts)
     gas_names = [g.lower() + "_kg" for g in GASES]
     indicators = [*indicator_names, *gas_names]
-    # Source x gas columns of the MAIN variant (kg/yr, from the
-    # ledger traceability): they let the R analysis decompose the
-    # GWP100 variance by emission source (enteric, manure, soils,
-    # ...), splitting the inventory error from the characterisation
-    # (GWP-factor) error. Only the (source, gas) pairs that actually
-    # carry emissions in the central run are exported.
     central_sources = central.ledger.total_by_source()
     source_gas_columns: List[str] = []
     for source in sorted(central_sources):
@@ -741,7 +799,8 @@ def run_paired_variant_grid(
 
     emissions_table: List[Dict[str, Any]] = []
     parameter_draws_table: List[Dict[str, Any]] = []
-    failed: Dict[str, int] = {v: 0 for v in runnable}
+    failed: Dict[str, int] = {label: 0 for label in labels}
+    reference_label = _label(reference)
     for i in range(n_iterations):
         drawn = engine.params.draw(rng)
         if has_measures:
@@ -749,22 +808,22 @@ def run_paired_variant_grid(
         row_emissions: Dict[str, Any] = {"iteration": i}
         row_params: Dict[str, Any] = {"iteration": i}
         row_ok = True
-        for variant in runnable:
+        for label, sel in columns:
             try:
                 it = engine.run(
                     farms,
-                    model_selection={**base_selection, "enteric_ch4": variant},
+                    model_selection={**base_selection, **sel},
                     values=drawn,
                     record=False,
                 )
             except Exception:
-                failed[variant] += 1
+                failed[label] += 1
                 row_ok = False
                 break
             values_i = _farm_indicators(it)
             for k in indicators:
-                row_emissions[f"{variant}__{k}"] = values_i[k]
-            if variant == main_variant:
+                row_emissions[f"{label}__{k}"] = values_i[k]
+            if label == reference_label:
                 row_emissions.update(_source_gas(it))
         _set_ration_mode(ration_state, "measured")
         if not row_ok:
@@ -772,29 +831,36 @@ def run_paired_variant_grid(
         row_params.update(drawn)
         emissions_table.append(row_emissions)
         parameter_draws_table.append(row_params)
-    # Per-variant statistics of every farm indicator + the paired
-    # difference against the main variant (the pure model-choice
-    # effect: same draw, same iteration).
+
+    # Per-column statistics of every farm indicator.
     farm_indicators_stats: Dict[str, Dict[str, Any]] = {}
-    paired_differences_stats: Dict[str, Dict[str, Any]] = {}
     for k in indicators:
-        main_col = [row[f"{main_variant}__{k}"] for row in emissions_table]
         farm_indicators_stats[k] = {
-            variant: _stats([row[f"{variant}__{k}"] for row in emissions_table])
-            for variant in runnable
+            label: _stats([row[f"{label}__{k}"] for row in emissions_table])
+            for label in labels
         }
-        for variant in runnable:
-            if variant == main_variant:
+
+    # Paired differences isolating ONE swept slot: alternative column
+    # (only that slot differs from the reference) minus the reference
+    # column, per iteration — the pure effect of that model choice.
+    paired_differences_stats: Dict[str, Dict[str, Any]] = {}
+    for slot in slot_order:
+        for variant in runnable[slot]:
+            if variant == reference[slot]:
                 continue
-            alt_col = [row[f"{variant}__{k}"] for row in emissions_table]
-            paired_differences_stats[f"{variant}"] = {
-                **paired_differences_stats.get(f"{variant}", {}),
-                k: _stats([a - m for a, m in zip(alt_col, main_col)]),
-            }
-    # Central values of the characterisation factors (AR6 Table 7.15):
-    # they let downstream analyses recompose an inventory-only GWP100
-    # difference (central factors) from the gas columns of the paired
-    # table, i.e. strip the characterisation uncertainty.
+            alt_sel = {**reference, slot: variant}
+            alt_label = _label(alt_sel)
+            diff_label = variant if single_slot else f"{slot}={variant}"
+            paired_differences_stats[diff_label] = {}
+            for k in indicators:
+                alt_col = [row[f"{alt_label}__{k}"] for row in emissions_table]
+                main_col = [
+                    row[f"{reference_label}__{k}"] for row in emissions_table
+                ]
+                paired_differences_stats[diff_label][k] = _stats(
+                    [a - m for a, m in zip(alt_col, main_col)]
+                )
+
     central_gwp_factors = {
         pid: value
         for pid, value in central_values.items()
@@ -803,9 +869,10 @@ def run_paired_variant_grid(
     out: Dict[str, Any] = {
         "sim_id": sim_id,
         "method": "paired Monte-Carlo",
-        "slot": "enteric_ch4",
-        "variants": runnable,
-        "main_variant": main_variant,
+        "mode": "full_factorial" if full_factorial else "one_factor",
+        "slots": {s: list(runnable[s]) for s in slot_order},
+        "combinations": labels,
+        "main_selection": dict(reference),
         "central_gwp_factors": central_gwp_factors,
         "source_gas_columns": source_gas_columns,
         "excluded_variants": exclusions,
@@ -818,6 +885,10 @@ def run_paired_variant_grid(
         "emissions_table": emissions_table,
         "parameter_draws_table": parameter_draws_table,
     }
+    if single_slot:
+        out["slot"] = slot_order[0]
+        out["variants"] = list(runnable[slot_order[0]])
+        out["main_variant"] = reference[slot_order[0]]
     if record:
         engine._record(
             central,
@@ -827,3 +898,36 @@ def run_paired_variant_grid(
                          if k not in ("sim_id", "method")},
         )
     return out
+
+
+def run_paired_variant_grid(
+    engine: "LCAEngine",
+    farms: Union[FarmContext, Sequence[FarmContext]],
+    variants: Sequence[str],
+    n_iterations: int = 1000,
+    model_selection: Optional[Dict[str, str]] = None,
+    seed: Optional[int] = None,
+    record: bool = True,
+    sim_id: str = "paired_enteric_grid",
+    main_variant: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Paired Monte-Carlo evaluation of enteric-CH4 model variants.
+
+    Historical single-slot interface of the paired grid, kept for the
+    existing analyses (R scripts, case-study orchestration); it is a
+    thin wrapper over :func:`run_paired_grid` with
+    ``slots={"enteric_ch4": variants}``. See the full contract there.
+    """
+    return run_paired_grid(
+        engine,
+        farms,
+        slots={"enteric_ch4": variants},
+        n_iterations=n_iterations,
+        model_selection=model_selection,
+        seed=seed,
+        record=record,
+        sim_id=sim_id,
+        main_selection=(
+            {"enteric_ch4": main_variant} if main_variant is not None else None
+        ),
+    )

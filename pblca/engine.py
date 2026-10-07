@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from .gases import GasLedger
 from .impacts import GwpStarInputs, characterize
 from .mc import run_monte_carlo as _mc_run_monte_carlo
+from .mc import run_paired_grid as _mc_run_paired_grid
 from .mc import run_paired_variant_grid as _mc_run_paired_variant_grid
 from .mc import run_ration_comparison as _mc_run_ration_comparison
 from .params import ParameterSet, build_default_parameter_set
@@ -506,4 +507,60 @@ class LCAEngine:
             record=record,
             sim_id=sim_id,
             main_variant=main_variant,
+        )
+
+    # ------------------------------------------------------------------
+    # Paired Monte-Carlo: one draw, every slot x variant combination
+    # ------------------------------------------------------------------
+    def run_paired_grid(
+        self,
+        farms: Union[FarmContext, Sequence[FarmContext]],
+        slots: Dict[str, Sequence[str]],
+        n_iterations: int = 1000,
+        model_selection: Optional[Dict[str, str]] = None,
+        seed: Optional[int] = None,
+        record: bool = True,
+        sim_id: str = "paired_grid",
+        main_selection: Optional[Dict[str, str]] = None,
+        full_factorial: bool = False,
+    ) -> Dict[str, Any]:
+        """Paired evaluation of model variants over several slots
+        (delegates to :func:`pblca.mc.run_paired_grid`).
+
+        Generalisation of :meth:`run_paired_variant_grid`: at each
+        Monte-Carlo iteration, ONE parameter draw is performed and
+        every column of the grid (one factor at a time, or the full
+        factorial of the swept slots) is evaluated with this same
+        draw. See the full contract in :mod:`pblca.mc`.
+
+        Args:
+            farms: one farm or a list of farms.
+            slots: variants to sweep, per slot, e.g.
+                ``{"enteric_ch4": [...], "manure_ch4": [...]}``.
+            n_iterations: number of iterations (>0).
+            model_selection: variants for the non-swept slots.
+            seed: random seed (reproducibility).
+            record: if True, records a summary entry in the datastore.
+            sim_id: identifier of the recorded entry.
+            main_selection: reference variant per swept slot (default:
+                the first runnable variant of each slot).
+            full_factorial: sweep the Cartesian product of the
+                variants instead of one factor at a time.
+
+        Returns:
+            the full contract of :func:`pblca.mc.run_paired_grid`
+            (emissions_table, parameter_draws_table, per-column and
+            paired-difference statistics, excluded variants).
+        """
+        return _mc_run_paired_grid(
+            self,
+            farms,
+            slots=slots,
+            n_iterations=n_iterations,
+            model_selection=model_selection,
+            seed=seed,
+            record=record,
+            sim_id=sim_id,
+            main_selection=main_selection,
+            full_factorial=full_factorial,
         )
