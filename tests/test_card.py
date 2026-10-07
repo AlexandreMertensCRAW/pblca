@@ -82,6 +82,7 @@ avg_temp = 10.0
 
 [farm.manure_split]
 solid_storage = 1.0
+liquid_slurry = 0.0
 
 [farm.purchases]
 concentrate_kg_dm = 1000.0
@@ -154,3 +155,53 @@ def test_cli_run_invalid_card(tmp_path):
     )
     assert result.returncode == 2
     assert "unknown farm" in result.stderr
+
+
+def _inline_farm_card(manure_split=None):
+    section = ""
+    if manure_split is not None:
+        rows = "\n".join(f"{k} = {v}" for k, v in manure_split.items())
+        section = f"\n[farm.manure_split]\n{rows}\n"
+    return f"""
+[study]
+name = "ms"
+
+[farm]
+farm_id = "f"
+avg_temp = 10.0
+{section}
+[farm.purchases]
+concentrate_kg_dm = 100.0
+
+[[farm.animals]]
+key = "a"
+n_head = 5.0
+days = 100
+bw_start = 50.0
+bw_end = 100.0
+diet_de = 0.65
+
+[[farm.parcels]]
+key = "p"
+crop = "mais"
+area = 3.0
+"""
+
+
+def test_card_manure_split_required_and_explicit():
+    """[farm.manure_split] is the explicit solid manure / slurry ratio
+    of the housed excretions: required, 'pasture' forbidden (derived
+    from the grazing events) and a positive slurry rejected until the
+    pathway is implemented."""
+    with pytest.raises(CardError, match="manure_split' is required"):
+        load_card(_write_card_tmp(_inline_farm_card()))
+    with pytest.raises(CardError, match="derived from the"):
+        load_card(_write_card_tmp(_inline_farm_card(
+            {"pasture": 0.3, "solid_storage": 0.7})))
+    with pytest.raises(CardError, match="not yet"):
+        load_card(_write_card_tmp(_inline_farm_card(
+            {"solid_storage": 0.5, "liquid_slurry": 0.5})))
+    card = load_card(_write_card_tmp(_inline_farm_card(
+        {"solid_storage": 1.0, "liquid_slurry": 0.0})))
+    assert card.farm.manure_split == {"solid_storage": 1.0,
+                                      "liquid_slurry": 0.0}

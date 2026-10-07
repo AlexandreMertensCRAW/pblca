@@ -50,10 +50,6 @@ The inline farm mirrors :class:`pblca.farm_spec.FarmSpec`:
     mature_weight = 700.0
     manure_exported = 0.0
 
-    [farm.manure_split]
-    pasture = 0.45
-    solid_storage = 0.55
-
     [farm.purchases]
     concentrate_kg_dm = 15000.0
 
@@ -212,7 +208,28 @@ def _parse_farm(data: Dict[str, Any]) -> FarmSpec:
     if purchases is None:
         raise CardError("[farm]: 'purchases' is required ([farm.purchases])")
     if manure_split is None:
-        raise CardError("[farm]: 'manure_split' is required ([farm.manure_split])")
+        raise CardError(
+            "[farm]: 'manure_split' is required — the solid manure / "
+            "slurry (liquid manure) ratio of the HOUSED excretions "
+            "([farm.manure_split])"
+        )
+    if "pasture" in manure_split:
+        raise CardError(
+            "[farm.manure_split]: the pasture share is derived from the "
+            "grazing events; declare only the HOUSED systems "
+            "(solid_storage, liquid_slurry)"
+        )
+    unknown_systems = sorted(set(manure_split) - {"solid_storage", "liquid_slurry"})
+    if unknown_systems:
+        raise CardError(
+            f"[farm.manure_split]: unknown system(s) {unknown_systems} "
+            "(accepted: solid_storage, liquid_slurry)"
+        )
+    if manure_split.get("liquid_slurry", 0.0) > 0:
+        raise CardError(
+            "[farm.manure_split]: the liquid slurry pathway is not yet "
+            "implemented (no sourced MCF/EF3 parameters); it must be 0.0"
+        )
     if not isinstance(animals_data, list) or not animals_data:
         raise CardError("[farm]: 'animals' must be a non-empty list")
     if not isinstance(parcels_data, list) or not parcels_data:

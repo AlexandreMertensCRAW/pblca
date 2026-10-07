@@ -21,11 +21,13 @@ avg_temp = 11.0
 mature_weight = 700.0
 manure_exported = 0.0
 
+# Solid manure / slurry (liquid manure) ratio of the HOUSED
+# excretions (the pasture share is derived from the grazing events).
+# This farm stores solid manure only; the slurry pathway is not yet
+# implemented in the engine and must be 0.0.
 [farm.manure_split]
-# Share of the HOUSED excretions per management system. The pasture
-# share is derived from the grazing events of the parcels (below) —
-# it is NOT declared here.
 solid_storage = 1.0
+liquid_slurry = 0.0
 
 [farm.purchases]
 # Purchased young animals: count and live weight; the engine derives
